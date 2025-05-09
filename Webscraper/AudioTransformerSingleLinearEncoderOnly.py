@@ -13,7 +13,6 @@ class AudioTransformerSingleLinearEncoderOnly(nn.Module):
 
         self.query_tokens = nn.Parameter(torch.randn(length, d_model))
 
-        #self.W_E = nn.Parameter(torch.Tensor(d_model, d_model))
         self.d_model = d_model
         self.encoder = ModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
                                                                    d_model=d_model,

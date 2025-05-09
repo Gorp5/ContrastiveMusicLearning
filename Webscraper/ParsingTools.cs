@@ -238,8 +238,8 @@ namespace Webscraper {
         
         public static async Task Main(string[] args)
         {
-            string htmlData = "E:\\Coding\\SongAnalyzer\\Analyzer\\Webscraper\\Data\\data3-10-25.txt";
-            string clusterData = "E:\\Coding\\SongAnalyzer\\Analyzer\\Webscraper\\output_analysis\\elki-FINAL-Linear-252-COS\\clu_0.02331035207414631.txt";
+            string htmlData = "\\Data\\data3-10-25.txt";
+            string clusterData = "\\output_analysis\\elki-FINAL-Linear-252-COS\\clu_0.02331035207414631.txt";
             List<SongFeatureWrapper> songs = readHTMLIntoSongs(htmlData);
             
             songs = songs.Distinct(new SongFeatureWrapper.SongComparator()).ToList();

@@ -1,20 +1,11 @@
-import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-import os
-import numpy as np
-from tqdm import tqdm
 import math
 
-import copy
-import warnings
+
 from typing import Any, Callable, Optional, Union
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor
-from torch.nn.init import xavier_uniform_
 
 
 device = "cuda"
@@ -32,28 +23,6 @@ def create_rotary_embedding(seq_len, d_model):
     return pos_emb_matrix.to(device)
 
 
-#============ Sinusoidal Positional Embeddings ============#
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-
-        encodings = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-
-        # Compute the div_term for the sine and cosine functions
-        coefficient = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-
-        # Sin for even and cos for odd
-        encodings[:, 0::2] = torch.sin(position * coefficient)
-        encodings[:, 1::2] = torch.cos(position * coefficient)
-
-        # Change dimensions
-        encodings = encodings.unsqueeze(0).transpose(0, 1)
-        self.register_buffer('encodings', encodings)
-
-    def forward(self, x):
-        # Add positional encoding to the input tensor
-        return x + self.encodings[:x.size(0), :]
 
 
 
