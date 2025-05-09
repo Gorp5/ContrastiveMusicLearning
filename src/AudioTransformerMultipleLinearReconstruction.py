@@ -4,11 +4,11 @@ import RoPEALiBiComponents
 import ModelComponents
 
 
-class AudioTransformerMultipleLinearReconstruction(nn.Module):
+class AudioTransformerCLSReconstruction(nn.Module):
     def __init__(self, input_dim=64, num_heads=16, transformer_layers=8, length=256, d_model=256, dim_feedforward=512, dropout=0.1,
                  latent_space=64):
-        super(AudioTransformerMultipleLinearReconstruction, self).__init__()
-        self.name = f"AudioTransformerMultipleLinearReconstruction-LatentSpace{latent_space}-Heads{num_heads}-TrasformerLayers{transformer_layers}-DModel{length}-Dropout{dropout}"
+        super(AudioTransformerCLSReconstruction, self).__init__()
+        self.name = f"AudioTransformerCLSReconstruction-LatentSpace{latent_space}-Heads{num_heads}-TrasformerLayers{transformer_layers}-DModel{length}-Dropout{dropout}"
 
         self.projection = nn.Linear(input_dim, d_model)
         self.projection_gelu = nn.GELU()
@@ -26,38 +26,13 @@ class AudioTransformerMultipleLinearReconstruction(nn.Module):
                                                                     dropout=dropout,
                                                                     device='cuda')
 
-
-        self.to_latent1 = nn.Linear(d_model * length, d_model)
-        self.to_latent1_gelu = nn.GELU()
-
-        self.to_latent2 = nn.Linear(d_model, d_model)
-        self.to_latent2_gelu = nn.GELU()
-
-        self.to_latent3 = nn.Linear(d_model, d_model // 2)
-        self.to_latent3_gelu = nn.GELU()
-
-        self.to_latent4 = nn.Linear(d_model // 2, d_model // 2)
-        self.to_latent4_gelu = nn.GELU()
-
-        self.to_latent5 = nn.Linear(d_model // 2, latent_space)
-        self.to_latent5_gelu = nn.GELU()
+        self.encode_to_latent = nn.Linear(d_model * length, latent_space)
+        self.encode_to_latent_gelu = nn.GELU()
 
         # Latent Space
 
-        self.from_latent1 = nn.Linear(latent_space, d_model // 2)
-        self.from_latent1_gelu = nn.GELU()
-
-        self.from_latent2 = nn.Linear(d_model // 2, d_model // 2)
-        self.from_latent2_gelu = nn.GELU()
-
-        self.from_latent3 = nn.Linear(d_model // 2, d_model)
-        self.from_latent3_gelu = nn.GELU()
-
-        self.from_latent4 = nn.Linear(d_model, d_model)
-        self.from_latent4_gelu = nn.GELU()
-
-        self.from_latent5 = nn.Linear(d_model, d_model * length)
-        self.from_latent5_gelu = nn.GELU()
+        self.encode_from_latent = nn.Linear(latent_space, d_model * length)
+        self.encode_from_latent_gelu = nn.GELU()
 
         # Transformer Decoder
         self.decoder = ModelComponents.RoPEALiBiTransformerDecoder(num_layers=transformer_layers,
@@ -78,56 +53,35 @@ class AudioTransformerMultipleLinearReconstruction(nn.Module):
         return memory
 
     def to_latent(self, x):
-        memory = self.projection(x)  # Project the whole sequence
+        # Project to Model Dimension
+        memory = self.projection(x)
         memory = self.projection_gelu(memory)
 
+        # Encoder Block
         memory = self.encoder(memory)  # Pass through Transformer encoder
 
         # Reshape for decoder input (Concatenation)
         memory = memory.reshape(memory.size(0), -1)
 
-        memory = self.to_latent1(memory)
-        memory = self.to_latent1_gelu(memory)
+        # Project to Latent Space
+        memory = self.encode_to_latent(memory)
+        memory = self.encode_to_latent_gelu(memory)
 
-        memory = self.to_latent2(memory)
-        memory = self.to_latent2_gelu(memory)
-
-        memory = self.to_latent3(memory)
-        memory = self.to_latent3_gelu(memory)
-
-        memory = self.to_latent4(memory)
-        memory = self.to_latent4_gelu(memory)
-
-        memory = self.to_latent5(memory)
-        memory = self.to_latent5_gelu(memory)
-
-        memory = memory.unsqueeze(1)  # Reshape for decoder input
         return memory
 
     def from_latent(self, x):
-        # Learn to transform latent representation into a sequence
-        memory = self.from_latent1(x)
-        memory = self.from_latent1_gelu(memory)
+        # Project from Latent Space
+        memory = self.encode_from_latent(x)
+        memory = self.encode_from_latent_gelu(memory)
 
-        memory = self.from_latent2(memory)
-        memory = self.from_latent2_gelu(memory)
-
-        memory = self.from_latent3(memory)
-        memory = self.from_latent3_gelu(memory)
-
-        memory = self.from_latent4(memory)
-        memory = self.from_latent4_gelu(memory)
-
-        memory = self.from_latent5(memory)
-        memory = self.from_latent5_gelu(memory)
-
-        # Reshape from concatenated representation
+        # Reshape from concatenated representation and get Query Tokens
         queries = self.query_tokens.unsqueeze(0).repeat(x.size(0), 1, 1)
         memory = memory.reshape(x.size(0), queries.shape[1], -1)
 
         # Decoder Block
         memory = self.decoder(queries, memory)
 
+        # Project to Output Dimension
         memory = self.fc_out(memory)
         memory = self.fc_gelu(memory)
 
