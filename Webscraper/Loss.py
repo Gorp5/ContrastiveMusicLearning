@@ -1,48 +1,49 @@
 import torch
 import torch.nn as nn
+#from soft_dtw_pytorch import SoftDTW
 
-
-# ============ Reconstruction Loss Function ============ #
+ # Cosine Similarity as the Reconstructive Loss
 def reconstruction_loss(pred, target):
     # Range {0, 2}
     return (1 - nn.CosineSimilarity()(pred, target)).mean(dim=-1)
 
-# ============ Contrastive Loss ============ #
-def contrastive_loss(pred, target, temperature=0.5):
-    batch_size = pred.shape[0]
 
-    concat = torch.cat([pred, target], dim=0)
-    norm = torch.norm(concat, dim=1)
+# Cross Correlation Loss
+def cross_corr_fft(pred, target):
+    B, T, F = pred.shape
 
-    # Compute similarity matrix using cosine similarity.
-    similarity_matrix = torch.matmul(norm, norm.T)
+    # reshape & z-score each (batch,feature) sequence
+    pred = pred.transpose(1, 2).reshape(B * F, T)
+    target = target.transpose(1, 2).reshape(B * F, T)
 
-    # Scaling
-    logits = similarity_matrix / temperature
+    # Z_Score Normalization
+    pred = (pred - pred.mean(1,keepdim=True)) / (pred.std(1,keepdim=True) + 1e-8)
+    target = (target - target.mean(1,keepdim=True)) / (target.std(1,keepdim=True) + 1e-8)
 
-    # Mask out self-similarity by setting the diagonal to a very negative value.
-    mask = torch.eye(2 * batch_size, dtype=torch.bool, device=norm.device)
-    logits.masked_fill_(mask, -1e9)
+    # full FFT cross-correlation
+    fft_size = 2 * T
+    p_fft = torch.fft.rfft(pred,  n=fft_size)
+    t_fft = torch.fft.rfft(target, n=fft_size)
+    cc_full = torch.fft.irfft(p_fft.conj() * t_fft, n=fft_size)
 
-    # For each sample i in [0, batch_size-1], the positive pair is at index i + batch_size.
-    # For each sample i in [batch_size, 2*batch_size-1], the positive pair is at index i - batch_size.
-    positive_indices = torch.arange(batch_size, device=norm.device)
-    labels = torch.cat([positive_indices + batch_size, positive_indices], dim=0)
+    # valid lags: [-(T-1) .. +(T-1)], center lag=0
+    cc = cc_full[:, :2 * T-1]
+    cc = torch.roll(cc, shifts=T - 1, dims=1)
 
-    # Now logits has shape (2B, 2B) and labels is (2B,)
-    loss = nn.CrossEntropyLoss()(logits, labels)
-    return loss  / 60000.0  # Normalize to a value close to 1
+    # normalize by t
+    cc = cc / T
+
+    # take peak corr ∈ [–1,1], and form loss=1–peak
+    max_corr = cc.max(dim=1).values       # [B*F]
+    max_corr = max_corr.view(B, F)       # reshape
+    loss = 1 - max_corr.mean(dim=1)      # [B]
+    return loss.mean()                   # scalar
 
 
-# ============ Combined Loss Function ============ #
 def combined_loss(pred, target):
     rec_loss = reconstruction_loss(pred, target)
-    contr_loss = contrastive_loss(pred, target)
+    contr_loss = cross_corr_fft(pred, target)
 
     total_loss = rec_loss + contr_loss
 
     return total_loss.mean()
-
-
-
-
