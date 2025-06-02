@@ -1,21 +1,24 @@
 import torch.nn as nn
 import torch
-import ModelComponents
+
+import LatentAttentionComponents
+from torch.utils.checkpoint import checkpoint
 
 
-class AudioTransformer(nn.Module):
-    def __init__(self, input_dim=64, num_heads=16, transformer_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
+class AudioTransformerLatentAttention(nn.Module):
+    def __init__(self, input_dim=64, num_heads=16, transformer_layers=8, length=256, d_model=256, projection_dim=64, dim_feedforward=512, checkpointing=False, dropout=0.1,
                  latent_space=64, name_extension="", use_alibi=True, use_rope=True):
-        super(AudioTransformer, self).__init__()
-        self.name = f"AudioTransformer-LatentSpace{latent_space}-Heads{num_heads}-TrasformerLayers{transformer_layers}-DModel{length}-Dropout{dropout}{name_extension}"
+        super(AudioTransformerLatentAttention, self).__init__()
+        self.name = f"AudioTransformerLatentAttention-LatentSpace{latent_space}-Heads{num_heads}-TrasformerLayers{transformer_layers}-DModel{length}-Dropout{dropout}{name_extension}"
 
         self.projection = nn.Linear(input_dim, d_model)
         self.projection_gelu = nn.GELU()
 
         self.query_tokens = nn.Parameter(torch.randn(length, d_model))
 
-        self.encoder = ModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
+        self.encoder = LatentAttentionComponents.RoPEALiBiLatentTransformerEncoder(num_layers=transformer_layers,
                                                                    d_model=d_model,
+                                                                   proj_dimension=projection_dim,
                                                                    num_heads=num_heads,
                                                                    dim_feedforward=dim_feedforward,
                                                                    seq_len=length,
@@ -33,8 +36,9 @@ class AudioTransformer(nn.Module):
         self.encode_from_latent = nn.Linear(latent_space, d_model * length)
         self.encode_from_latent_gelu = nn.GELU()
 
-        self.decoder = ModelComponents.RoPEALiBiTransformerDecoder(num_layers=transformer_layers,
+        self.decoder = LatentAttentionComponents.RoPEALiBiLatentTransformerDecoder(num_layers=transformer_layers,
                                                                     d_model=d_model,
+                                                                    proj_dimension=projection_dim,
                                                                     num_heads=num_heads,
                                                                     dim_feedforward=dim_feedforward,
                                                                     seq_len=length,
@@ -47,6 +51,7 @@ class AudioTransformer(nn.Module):
         # Last Linear Layer
         self.fc_out = nn.Linear(d_model, input_dim)
         self.fc_gelu = nn.GELU()
+        self.checkpointing = False
 
     def forward(self, x, mask=None):
         memory = self.to_latent(x, mask)
@@ -56,6 +61,7 @@ class AudioTransformer(nn.Module):
     def to_latent(self, x, mask):
         # Project to Model Dimension
         memory = self.projection(x)
+
         memory = self.projection_gelu(memory)
 
         # Encoder Block
@@ -66,13 +72,18 @@ class AudioTransformer(nn.Module):
 
         # Project to Latent Space
         memory = self.encode_to_latent(memory)
+
         memory = self.encode_to_latent_gelu(memory)
 
         return memory
 
     def from_latent(self, x, mask):
         # Project from Latent Space
-        memory = self.encode_from_latent(x)
+        if self.checkpointing:
+            memory = checkpoint(self.encode_from_latent, x)
+        else:
+            memory = self.encode_from_latent(x)
+
         memory = self.encode_from_latent_gelu(memory)
 
         # Reshape from concatenated representation and get Query Tokens
@@ -80,10 +91,14 @@ class AudioTransformer(nn.Module):
         memory = memory.reshape(x.size(0), queries.shape[1], -1)
 
         # Decoder Block
-        memory = self.decoder(queries, memory, mask)
+        memory = self.decoder(memory, queries, mask)
 
         # Project to Output Dimension
-        memory = self.fc_out(memory)
+        if self.checkpointing:
+            memory = checkpoint(self.fc_out, memory)
+        else:
+            memory = self.fc_out(memory)
+
         memory = self.fc_gelu(memory)
 
         return memory
@@ -91,3 +106,4 @@ class AudioTransformer(nn.Module):
     def set_checkpointing(self, checkpointing):
         self.encoder.set_checkpointing(checkpointing)
         self.decoder.set_checkpointing(checkpointing)
+        self.checkpointing = checkpointing

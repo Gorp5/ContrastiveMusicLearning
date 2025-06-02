@@ -5,8 +5,8 @@ import torch.nn
 from tqdm import tqdm
 import torch.profiler
 
-from Analyzer.Webscraper.Loss import cross_corr_fft
-from Loss import combined_loss, contrastive_loss
+from Loss import cross_corr_fft
+from Loss import combined_loss
 from Loss import reconstruction_loss
 from transformers import get_cosine_schedule_with_warmup
 
@@ -23,11 +23,12 @@ def evaluate(model, dataloader, device="cuda"):
 
     # Disable gradient computation for evaluation
     with torch.no_grad():
-        for batch in tqdm(dataloader):
+        for batch, masks in tqdm(dataloader):
             batch = batch.to(device)  # Move batch to GPU
+            masks = masks.to(device)
 
             # Forward pass
-            reconstructed = model(batch)
+            reconstructed = model(batch, masks)
 
             # Compute loss (only on masked positions)
             r_loss = reconstruction_loss(reconstructed, batch)
@@ -51,10 +52,10 @@ def evaluate(model, dataloader, device="cuda"):
     return total_r_loss + total_cc_loss + total_c_loss
 
 # Path
-path = "E:\\Coding\\SongAnalyzer\\Analyzer\\Webscraper\\"
+path = "E:\\Coding\\SongAnalyzer\\Analyzer\\src\\"
 
 # ==== Training Function ====
-def train(model, dataloader, test_dataloader, optimizer, num_epochs=20, device="cuda", loss_func=combined_loss):
+def train(model, dataloader, test_dataloader, optimizer, num_epochs=20, device="cuda", loss_func=combined_loss, masks=True):
     samples_per_batch = 8
     name = model.name
     directory = f"{path}{name}\\"
@@ -78,12 +79,14 @@ def train(model, dataloader, test_dataloader, optimizer, num_epochs=20, device="
         total_loss = 0
 
         model.train()
-        for batch in tqdm(dataloader):
+        for batch, masks in tqdm(dataloader):
             batch = batch.to(device)
+            masks = masks.to(device)
+
             optimizer.zero_grad()
 
             # Forward pass
-            reconstructed = model(batch)
+            reconstructed = model(batch, masks)
 
             # Compute loss (only on masked positions)
             loss = loss_func(reconstructed, batch)
@@ -100,11 +103,12 @@ def train(model, dataloader, test_dataloader, optimizer, num_epochs=20, device="
 
         total_loss_valid = 0
         with torch.no_grad():
-            for batch in tqdm(test_dataloader):
+            for batch, masks in tqdm(test_dataloader):
                 batch = batch.to(device)
+                masks = masks.to(device)
 
                 # Forward pass
-                reconstructed = model(batch)
+                reconstructed = model(batch, masks)
 
                 # Compute loss
                 loss = loss_func(reconstructed, batch)

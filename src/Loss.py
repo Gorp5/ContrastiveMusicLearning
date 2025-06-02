@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 #from soft_dtw_pytorch import SoftDTW
 
- # Cosine Similarity as the Reconstructive Loss
+# Cosine Similarity as the Reconstructive Loss
 def reconstruction_loss(pred, target):
     # Range {0, 2}
     return (1 - nn.CosineSimilarity()(pred, target)).mean(dim=-1)
