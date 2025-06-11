@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch
-import ModelComponents
+import RopeALiBiModelComponents
 
 
 class AudioTransformer(nn.Module):
@@ -14,7 +14,7 @@ class AudioTransformer(nn.Module):
 
         self.query_tokens = nn.Parameter(torch.randn(length, d_model))
 
-        self.encoder = ModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
+        self.encoder = RopeALiBiModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
                                                                    d_model=d_model,
                                                                    num_heads=num_heads,
                                                                    dim_feedforward=dim_feedforward,
@@ -28,12 +28,15 @@ class AudioTransformer(nn.Module):
         self.encode_to_latent = nn.Linear(d_model * length, latent_space)
         self.encode_to_latent_gelu = nn.GELU()
 
+        # Latent Space Normalization
+        self.norm = nn.LayerNorm(latent_space)
+
         # Latent Space
 
         self.encode_from_latent = nn.Linear(latent_space, d_model * length)
         self.encode_from_latent_gelu = nn.GELU()
 
-        self.decoder = ModelComponents.RoPEALiBiTransformerDecoder(num_layers=transformer_layers,
+        self.decoder = RopeALiBiModelComponents.RoPEALiBiTransformerDecoder(num_layers=transformer_layers,
                                                                     d_model=d_model,
                                                                     num_heads=num_heads,
                                                                     dim_feedforward=dim_feedforward,
@@ -67,6 +70,8 @@ class AudioTransformer(nn.Module):
         # Project to Latent Space
         memory = self.encode_to_latent(memory)
         memory = self.encode_to_latent_gelu(memory)
+
+        memory = self.norm(memory)
 
         return memory
 

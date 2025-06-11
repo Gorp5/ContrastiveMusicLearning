@@ -6,6 +6,21 @@ import numpy as np
 
 # ==== Custom Dataset ====
 class AudioDataset(Dataset):
+    def __init__(self, data):
+        """
+        Args:
+        - data: Tensor of shape (num_samples, seq_length, embed_dim)
+        """
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+
+class AudioDatasetMask(Dataset):
     def __init__(self, data, masks):
         """
         Args:
@@ -19,7 +34,6 @@ class AudioDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx], self.masks[idx]
-
 
 def chunk_song(path, sample_length):
     data = np.load(path)
