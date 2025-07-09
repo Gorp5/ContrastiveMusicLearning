@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import torch.nn.functional as F
 import math
-from torch.utils.checkpoint import checkpoint
+#from torch.utils.checkpoint import checkpoint
 
 from flash_attn import flash_attn_func
 
@@ -29,10 +29,13 @@ class RoPEALiBiMultiheadAttention(nn.Module):
         key = key.half()
         value = value.half()
 
-        B, L, _ = query.shape
-        query = query.view(B, L, self.num_heads, self.head_dim)
-        key = key.view(B, L, self.num_heads, self.head_dim)
-        value = value.view(B, L, self.num_heads, self.head_dim)
+        QB, QL, _ = query.shape
+        KB, KL, _ = key.shape
+        VB, VL, _ = value.shape
+
+        query = query.view(QB, QL, self.num_heads, self.head_dim)
+        key = key.view(KB, KL, self.num_heads, self.head_dim)
+        value = value.view(VB, VL, self.num_heads, self.head_dim)
 
         output = flash_attn_func(
             query, key, value,
@@ -41,7 +44,7 @@ class RoPEALiBiMultiheadAttention(nn.Module):
             alibi_slopes=self.alibi_slopes
         )
 
-        output = output.view(B, L, self.embed_dim)
+        output = output.view(QB, QL, self.embed_dim)
 
         output = output.float()
 
@@ -151,10 +154,10 @@ class RoPEALiBiTransformerEncoder(nn.Module):
 
     def forward(self, src, mask=None):
         for layer in self.layers:
-            if self.checkpointing:
-                src = checkpoint(layer, src, self.alibi_bias, self.pos_emb, mask)
-            else:
-                src = layer(src, self.alibi_bias, self.pos_emb, mask)
+            # if self.checkpointing:
+            #     src = checkpoint(layer, src, self.alibi_bias, self.pos_emb, mask)
+            # else:
+            src = layer(src, self.alibi_bias, self.pos_emb, mask)
 
         return self.norm(src)
 
@@ -182,14 +185,22 @@ class RoPEALiBiTransformerDecoderLayer(nn.Module):
         self.activation = nn.GELU()
 
     def forward(self, tgt, memory, self_alibi_bias, self_pos_emb, cross_alibi_bias, cross_pos_emb, mask):
+        t = tgt.size(1)
+        L = memory.size(1)
+
+        # slice biases and position embeddings
+        bias_self = self_alibi_bias[:, :t, :t] if self_alibi_bias is not None else None
+        pos_self = self_pos_emb[:t] if self_pos_emb is not None else None
+        bias_cross = cross_alibi_bias[:, :t, :L] if cross_alibi_bias is not None else None
+        pos_cross = cross_pos_emb[:L] if cross_pos_emb is not None else None
 
         # Self Attention Block
-        tgt2 = self.self_attn(tgt, tgt, tgt, self_alibi_bias, self_pos_emb, mask)
+        tgt2 = self.self_attn(tgt, tgt, tgt, bias_self, pos_self, mask)
         tgt2 = self.dropout1(tgt2)
         tgt = tgt + self.norm1(tgt2)
 
         # Cross-attention Block
-        tgt2 = self.cross_attn(tgt, memory, memory, cross_alibi_bias, cross_pos_emb, mask)
+        tgt2 = self.cross_attn(tgt, memory, memory, bias_cross, pos_cross, mask)
         tgt2 = self.dropout2(tgt2)
         tgt = tgt + self.norm2(tgt2)
 
@@ -234,10 +245,10 @@ class RoPEALiBiTransformerDecoder(nn.Module):
 
     def forward(self, tgt, memory, mask=None):
         for layer in self.layers:
-            if self.checkpointing:
-                tgt = checkpoint(layer, tgt, memory, self.self_alibi_bias, self.self_pos_emb, self.cross_alibi_bias, self.cross_pos_emb, mask)
-            else:
-                tgt = layer(tgt, memory, self.self_alibi_bias, self.self_pos_emb, self.cross_alibi_bias, self.cross_pos_emb, mask)
+            # if self.checkpointing:
+            #     tgt = checkpoint(layer, tgt, memory, self.self_alibi_bias, self.self_pos_emb, self.cross_alibi_bias, self.cross_pos_emb, mask)
+            # else:
+            tgt = layer(tgt, memory, self.self_alibi_bias, self.self_pos_emb, self.cross_alibi_bias, self.cross_pos_emb, mask)
 
         return self.norm(tgt)
 
