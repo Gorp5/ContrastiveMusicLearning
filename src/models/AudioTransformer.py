@@ -5,7 +5,7 @@ from models import RopeALiBiModelComponents
 
 class AudioTransformer(nn.Module):
     def __init__(self, input_dim=64, num_heads=16, encoder_layers=16, decoder_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
-                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False):
+                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False, genre_count=0, mood_count=0):
         super(AudioTransformer, self).__init__()
         self.name = f"AudioTransformer-LatentSpace{latent_space}-Heads{num_heads}-EncoderLayers{encoder_layers}-DecoderLayers{decoder_layers}-DModel{length}-Dropout{dropout}-AutoRegressive{autoregressive}{name_extension}"
 
@@ -38,6 +38,11 @@ class AudioTransformer(nn.Module):
         self.norm = nn.LayerNorm(latent_space)
 
         # Latent Space
+        self.classifier = genre_count > 0 and mood_count > 0
+
+        if self.classifier:
+            self.genre_classifier_head = nn.Linear(latent_space, genre_count)
+            self.mood_classifier_head = nn.Linear(latent_space, mood_count)
 
         self.encode_from_latent = nn.Linear(latent_space, d_model * length)
         self.encode_from_latent_gelu = nn.GELU()
@@ -64,6 +69,12 @@ class AudioTransformer(nn.Module):
             memory = self.from_latent_Autoregressive(latent, mask=mask, tgt=x[:, :-1])
         else:
             memory = self.from_latent(latent, mask)
+
+        if self.classifier:
+            genres = self.genre_classifier_head(latent)
+            moods = self.mood_classifier_head(latent)
+            return memory, latent, genres, moods
+
         return memory, latent
 
     def to_latent(self, x, mask):

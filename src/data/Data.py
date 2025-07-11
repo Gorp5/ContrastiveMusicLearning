@@ -38,19 +38,19 @@ class AudioDatasetMask(Dataset):
         return self.data[idx], self.masks[idx]
 
 class AudioDatasetTriplets(Dataset):
-    def __init__(self, data, masks):
+    def __init__(self, data, masks, tags=None):
         """
         Args:
         - data: Tensor of shape (num_samples, seq_length, embed_dim)
         """
         self.data = data
         self.masks = masks
+        self.tags = tags
 
-        index_map = []
+        self.index_map = []
         for song_idx, segments in enumerate(self.data):
             for seg_idx in range(len(segments)):
-                index_map.append((song_idx, seg_idx))
-        self.index_map = index_map
+                self.index_map.append((song_idx, seg_idx))
 
     def __len__(self):
         return len(self.index_map)
@@ -70,7 +70,7 @@ class AudioDatasetTriplets(Dataset):
 
         # Choose Random Song and Random Segment within Song
         num_songs = len(self.data)
-        possible_song_indicies = [i for i in range(num_segments) if i != song_idx]
+        possible_song_indicies = [i for i in range(num_songs) if i != song_idx]
         negative_choice_index = random.choice(possible_song_indicies)
 
         # Choose Random Segment within the same song
@@ -82,7 +82,38 @@ class AudioDatasetTriplets(Dataset):
         negative_pair_segment_mask = self.masks[negative_choice_index][negative_choice]
 
         # Return Anchor, Positive, and Negative Choices
-        return anchor_segment, anchor_segment_mask, positive_pair_segment, positive_pair_segment_mask, negative_pair_segment, negative_pair_segment_mask
+        return (anchor_segment, anchor_segment_mask,
+         positive_pair_segment, positive_pair_segment_mask,
+         negative_pair_segment, negative_pair_segment_mask,
+                self.tags[song_idx],
+                self.tags[negative_choice])
+
+
+class AudioDatasetClassification(Dataset):
+    def __init__(self, data, masks, tags):
+        """
+        Args:
+        - data: Tensor of shape (num_samples, seq_length, embed_dim)
+        """
+        self.data = data
+        self.masks = masks
+        self.tags = tags
+
+        self.index_map = []
+        for song_idx, segments in enumerate(self.data):
+            for seg_idx in range(len(segments)):
+                self.index_map.append((song_idx, seg_idx))
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, idx):
+        (song_idx, seg_idx) = self.index_map[idx]
+        anchor_segment = self.data[song_idx][seg_idx]
+        anchor_segment_mask = self.masks[song_idx][seg_idx]
+
+        return (anchor_segment, anchor_segment_mask, self.tags[song_idx])
+
 
 def chunk_song(path, sample_length):
     data = np.load(path)
