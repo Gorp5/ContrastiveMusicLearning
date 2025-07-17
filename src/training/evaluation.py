@@ -26,7 +26,7 @@ def evaluate(
     all_mood_targets = []
     all_genre_targets = []
 
-    label_loss = nn.BCEWithLogitsLoss()
+    label_loss = nn.BCEWithLogitsLoss(pos_weight=config.class_ratio)
 
     with torch.no_grad():
         for batch in tqdm(dataloader):
@@ -51,8 +51,11 @@ def evaluate(
 
             reconstructed, latents, predicted_genre_labels, predicted_mood_labels = model(data, masks)
 
-            genre_classification_loss += label_loss(genre_tags, predicted_genre_labels)
-            mood_classification_loss += label_loss(mood_tags, predicted_mood_labels)
+            predicted_genre_labels = predicted_genre_labels[is_dummy_genre_pos]
+            predicted_mood_labels = predicted_mood_labels[is_dummy_mood_pos]
+
+            genre_classification_loss += label_loss(predicted_genre_labels, genre_tags)
+            mood_classification_loss += label_loss(predicted_mood_labels, mood_tags)
 
             cosine_total += loss_utils.cosine_similarity(reconstructed, data)
             mse_total += loss_utils.mse(reconstructed, data)

@@ -151,18 +151,18 @@ def read_data_from_folder(folder_stub, start=0, count=-1, keep_song_data_option=
             masks.extend(final_mask)
         else:
             song_name = each_song[:-4]
-
-            dataset.append(torch.tensor(np.split(padded_data, padded_data.shape[0] / sample_length)))
+            dataset.append(torch.tensor(np.array(np.split(padded_data, padded_data.shape[0] / sample_length))))
             final_mask = [0 for _ in range(padded_data.shape[0] // sample_length - 1)]
             final_mask.append(mask)
+            index = padded_data.shape[0] // sample_length
             masks.append(final_mask)
-            keys.append(song_name)
+            keys.extend([song_name] * index)
 
     tens = dataset
     masks = masks
     return tens, masks, keys
 
 
-def retrieve_data(path_stub, song_path_stub, start=0, count=-1, sample_length=256, keep_song_data_option=False):
-    return read_data_from_folder(path_stub + song_path_stub, start=start, count=count, sample_length=sample_length, keep_song_data_option=keep_song_data_option)
+def retrieve_data(path_stub, start=0, count=-1, sample_length=256, keep_song_data_option=False):
+    return read_data_from_folder(path_stub, start=start, count=count, sample_length=sample_length, keep_song_data_option=keep_song_data_option)
 

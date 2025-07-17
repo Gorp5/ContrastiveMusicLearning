@@ -33,7 +33,7 @@ def trainHybrid(
     )
 
     current_step = 0
-    label_loss = nn.BCEWithLogitsLoss()
+    label_loss = nn.BCEWithLogitsLoss(pos_weight=config.class_ratio)
 
     for epoch in range(1, config.num_epochs + 1):
         model.train()
@@ -63,13 +63,16 @@ def trainHybrid(
 
             reconstructed, latents, genre_labels, mood_labels = model(data, masks)
 
-            genre_loss = label_loss(genre_tags, genre_labels)
-            mood_loss = label_loss(mood_tags, mood_labels)
+            genre_labels = genre_labels[is_dummy_genre_pos]
+            mood_labels = mood_labels[is_dummy_mood_pos]
+
+            genre_loss = label_loss(genre_labels, genre_tags)
+            mood_loss = label_loss(mood_labels, mood_tags)
 
             classification_loss = genre_loss + mood_loss
 
-            reconstruction_loss = loss_utils.combined_loss(reconstructed, data)
-
+            #reconstruction_loss = loss_utils.combined_loss(reconstructed, data)
+            reconstruction_loss = 0
             loss = reconstruction_loss + classification_loss
 
             loss.backward()
@@ -189,8 +192,8 @@ def trainTriplet(
             else:
                 reconstructed, latents = model(all_segments, all_masks)
 
-            reconstruction_loss = loss_utils.combined_loss(reconstructed, all_segments)
-
+            #reconstruction_loss = loss_utils.combined_loss(reconstructed, all_segments)
+            reconstructed_loss = 0
             anchor_latents, positive_latents, negative_latents = torch.split(latents, B, dim=0)
 
             anchor_positive_loss = loss_utils.cosine_similarity(anchor_latents, positive_latents)
