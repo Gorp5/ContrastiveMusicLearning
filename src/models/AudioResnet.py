@@ -1,9 +1,8 @@
 import torch
 from torch import nn
 
-
 class AudioResnet(nn.Module):
-    def __init__(self, num_classes=249):
+    def __init__(self, num_classes=95):
         super(AudioResnet, self).__init__()
 
         self.convIn = nn.Conv2d(1, 32, kernel_size=7, stride=2, padding=3, bias=True)
@@ -12,10 +11,17 @@ class AudioResnet(nn.Module):
         self.maxpoolIn = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
         # Stack1
-        self.stack1 = nn.ModuleList([ResidualBlock(64) for _ in range(3)])
-        self.stack2 = nn.ModuleList([ResidualBlock(128) for _ in range(4)])
-        self.stack3 = nn.ModuleList([ResidualBlock(256) for _ in range(6)])
-        self.stack4 = nn.ModuleList([ResidualBlock(512) for _ in range(3)])
+        self.stack1a = ResidualBlock(64, downsample=True)
+        self.stack1 = nn.ModuleList([ResidualBlock(64) for _ in range(2)])
+
+        self.stack2a = ResidualBlock(128, downsample=True)
+        self.stack2 = nn.ModuleList([ResidualBlock(128) for _ in range(3)])
+
+        self.stack3a = ResidualBlock(256, downsample=True)
+        self.stack3 = nn.ModuleList([ResidualBlock(256) for _ in range(5)])
+
+        self.stack4a = ResidualBlock(512, downsample=True)
+        self.stack4 = nn.ModuleList([ResidualBlock(512) for _ in range(2)])
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fcOut = nn.Linear(512, num_classes, bias=True)
@@ -32,15 +38,19 @@ class AudioResnet(nn.Module):
         x = self.relu(x)
         x = self.maxpoolIn(x)
 
+        x = self.stack1a(x)
         for l in self.stack1:
             x = l(x)
 
+        x = self.stack2a(x)
         for l in self.stack2:
             x = l(x)
 
+        x = self.stack3a(x)
         for l in self.stack3:
             x = l(x)
 
+        x = self.stack4a(x)
         for l in self.stack4:
             x = l(x)
 

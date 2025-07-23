@@ -115,7 +115,7 @@ class AudioDatasetClassification(Dataset):
         return (anchor_segment, anchor_segment_mask, self.tags[song_idx])
 
 
-def chunk_song(path, sample_length):
+def chunk_song(path, sample_length, features):
     data = np.load(path)
 
     # Fill with padding
@@ -124,13 +124,13 @@ def chunk_song(path, sample_length):
     if end_tokens == 0:
         end_tokens = sample_length
 
-    zeros = np.zeros((sample_length - end_tokens, 64))
+    zeros = np.zeros((sample_length - end_tokens, features))
     padded_data = np.concatenate((transposed, zeros))
 
     return padded_data, len(zeros)
 
 
-def read_data_from_folder(folder_stub, start=0, count=-1, keep_song_data_option=False, sample_length=256, return_mask=False):
+def read_data_from_folder(folder_stub, features=64, start=0, count=-1, keep_song_data_option=False, sample_length=256):
     dataset = []
     masks = []
     keys = []
@@ -142,7 +142,7 @@ def read_data_from_folder(folder_stub, start=0, count=-1, keep_song_data_option=
     for each_song in all_folders:
         path = os.path.join(folder_stub, each_song)
 
-        padded_data, mask = chunk_song(path, sample_length)
+        padded_data, mask = chunk_song(path, sample_length, features)
 
         if not keep_song_data_option:
             dataset.extend(np.split(padded_data, padded_data.shape[0] / sample_length))
@@ -163,6 +163,6 @@ def read_data_from_folder(folder_stub, start=0, count=-1, keep_song_data_option=
     return tens, masks, keys
 
 
-def retrieve_data(path_stub, start=0, count=-1, sample_length=256, keep_song_data_option=False):
-    return read_data_from_folder(path_stub, start=start, count=count, sample_length=sample_length, keep_song_data_option=keep_song_data_option)
+def retrieve_data(path_stub, features=64, start=0, count=-1, sample_length=256, keep_song_data_option=False):
+    return read_data_from_folder(path_stub, features=features, start=start, count=count, sample_length=sample_length, keep_song_data_option=keep_song_data_option)
 
