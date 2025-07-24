@@ -1,5 +1,8 @@
 import torch
 import torch.nn.functional as F
+import torch
+import torch.nn as nn
+#import torchsort  # pip install torchsort
 
 # Cosine Similarity as the Reconstructive Loss
 def cosine_similarity(pred, target):
@@ -7,6 +10,45 @@ def cosine_similarity(pred, target):
     loss = 1 - torch.nn.functional.cosine_similarity(pred, target).mean(dim=-1)
     return loss.mean()
 
+
+class DifferentiablePRAUCLoss(nn.Module):
+    def __init__(self, tau=0.1):
+        super().__init__()
+        self.tau = tau  # temperature for softmax smoothing
+
+    def forward(self, y_score, y_true):
+        """
+        y_score: [batch, num_labels] raw model scores (logits)
+        y_true:  [batch, num_labels] binary {0,1} tensor
+        """
+        # Flatten multi-label
+        scores = y_score.view(-1)
+        targets = y_true.view(-1).float()
+        pos_idx = torch.nonzero(targets == 1, as_tuple=False).view(-1)
+        neg_idx = torch.nonzero(targets == 0, as_tuple=False).view(-1)
+        if pos_idx.numel() == 0 or neg_idx.numel() == 0:
+            return torch.tensor(0., device=y_score.device, requires_grad=True)
+
+        s_pos = scores[pos_idx]  # positive scores
+        s_neg = scores[neg_idx]  # negative scores
+
+        # Pairwise score differences
+        diff = s_neg.unsqueeze(0) - s_pos.unsqueeze(1)  # shape [P, N]
+
+        # Apply smoothing via log-sigmoid (differentiable version of Heaviside)
+        P = torch.sigmoid(diff / self.tau)
+
+        # For each positive, how many negatives outrank it
+        rank_pos = 1 + P.sum(dim=1)
+        # Ideal rank if scores perfectly separate: 1...P
+        ideal = torch.arange(1, rank_pos.size(0) + 1, device=rank_pos.device, dtype=rank_pos.dtype)
+
+        # Precision-like term: proportion of positives above each positive
+        precision_at_k = ideal / rank_pos
+
+        # Differentiate PR-AUC proxy: average of precision_at_k
+        loss = 1 - precision_at_k.mean()
+        return loss
 
 def cross_relation_2(prediction: torch.Tensor, input: torch.Tensor, eps: float = 1e-9, lambda_offdiag: float = 0.005):
     """

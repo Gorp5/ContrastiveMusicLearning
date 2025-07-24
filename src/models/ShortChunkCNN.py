@@ -23,9 +23,11 @@ class ShortChunkCNN(nn.Module):
         self.layer2 = Conv_2d(n_channels, n_channels, pooling=2)
         self.layer3 = Conv_2d(n_channels, n_channels*2, pooling=2)
         self.layer4 = Conv_2d(n_channels*2, n_channels*2, pooling=2)
-        self.layer5 = Conv_2d(n_channels*2, n_channels*2, pooling=2)
+        self.layer5 = Conv_2d(n_channels*2, n_channels*2, pooling=1)
         self.layer6 = Conv_2d(n_channels*2, n_channels*2, pooling=2)
         self.layer7 = Conv_2d(n_channels*2, n_channels*4, pooling=1)
+        self.layer8 = Conv_2d(n_channels*4, n_channels*4, pooling=2)
+
 
         # Dense
         self.dense1 = nn.Linear(n_channels*4, n_channels*4)
@@ -49,7 +51,8 @@ class ShortChunkCNN(nn.Module):
         x = self.layer5(x)
         x = self.layer6(x)
         x = self.layer7(x)
-        x = x.squeeze(-1)
+        x = self.layer8(x)
+        x = x.squeeze(2)
 
         # Global Max Pooling
         if x.size(-1) != 1:

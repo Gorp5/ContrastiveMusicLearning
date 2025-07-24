@@ -15,7 +15,7 @@ class AudioResnet(nn.Module):
         self.stack1 = nn.ModuleList([ResidualBlock(64) for _ in range(2)])
 
         self.stack2a = ResidualBlock(128, downsample=True)
-        self.stack2 = nn.ModuleList([ResidualBlock(128) for _ in range(3)])
+        self.stack2 = nn.ModuleList([ResidualBlock(128) for _ in range(5)])
 
         self.stack3a = ResidualBlock(256, downsample=True)
         self.stack3 = nn.ModuleList([ResidualBlock(256) for _ in range(5)])
