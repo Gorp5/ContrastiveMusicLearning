@@ -47,3 +47,30 @@ def visualize_ROC_PR_AUC(probs, labels):
     plt.show()
 
     print(f"ROC-AUC: {roc_auc_macro:.4f}\tPR-AUC: {pr_auc_macro:.4f}")
+
+
+def show_weights(weights):
+    num_kernels_to_visualize = min(weights.shape[0], 64)  # Visualize up to 8 kernels
+    fig, axes = plt.subplots(1, num_kernels_to_visualize, figsize=(12, 2))
+
+    for i in range(num_kernels_to_visualize):
+        kernel = weights[i, 0, :, :].numpy()  # Assuming in_channels = 1
+        axes[i].imshow(kernel, cmap='gray')
+        #axes[i].set_title(f'Kernel {i + 1}')
+        axes[i].axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
+def show_weights(weights):
+    num_kernels_to_visualize = min(weights.shape[0], 64)  # Visualize up to 8 kernels
+    fig, axes = plt.subplots(1, num_kernels_to_visualize, figsize=(12, 2))
+
+    for i in range(num_kernels_to_visualize):
+        kernel = weights[i, 0, :, :].numpy()  # Assuming in_channels = 1
+        axes[i].imshow(kernel, cmap='gray')
+        #axes[i].set_title(f'Kernel {i + 1}')
+        axes[i].axis('off')
+
+    plt.tight_layout()
+    plt.show()

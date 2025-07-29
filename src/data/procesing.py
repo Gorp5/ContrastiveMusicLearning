@@ -7,11 +7,7 @@ import torch
 import matplotlib.pyplot as plt
 
 from tqdm import tqdm
-from data.Data import retrieve_data
-from torch.utils.data import Dataset, IterableDataset
 from mtgjamendodataset.scripts import commons
-from utils.data import createDictionary, makeClassLabels
-from torch.utils.data._utils.worker import get_worker_info
 from librosa.feature import melspectrogram
 
 
@@ -56,7 +52,6 @@ def ParseData(subset_file_name, data_location, output_directory, features=96, ch
     num_genres = len(subset_genre_mapping.keys())
     num_moods = len(tags['mood/theme'].keys())
     num_instruments = len(tags['instrument'].keys())
-
     print(f"There are {num_genres} genres in this partition.")
     print(f"There are {num_moods} moods/themes in this partition.")
     print(f"There are {num_instruments} instruments in this partition.")
@@ -68,6 +63,7 @@ def ParseData(subset_file_name, data_location, output_directory, features=96, ch
 
     validate_song_set = []
     validate_label_set = []
+    missed_songs = []
 
     # test_song_set = []
     # test_label_set = []
@@ -79,7 +75,8 @@ def ParseData(subset_file_name, data_location, output_directory, features=96, ch
         path_end = metadata_dict['path']
         genre = metadata_dict['genre']
 
-        full_path = data_location + path_end[:-3] + "npy"
+        path_stem = "npy" if not convert else "mp3"
+        full_path = data_location + path_end[:-3] + path_stem
 
         # Make a list of genres that song is tagged as
         labeled_genres = set()
@@ -112,9 +109,14 @@ def ParseData(subset_file_name, data_location, output_directory, features=96, ch
         if not convert:
             data = np.load(full_path)
         else:
-            audio, sr = librosa.load(full_path, sr=44100, mono=True)
-            data = librosa.feature.melspectrogram(y=audio, sr=sr)
-            #s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
+            if os.path.exists(full_path):
+                audio, sr = librosa.load(full_path, sr=44100, mono=True)
+                data = librosa.feature.melspectrogram(y=audio, sr=sr)
+                data = librosa.amplitude_to_db(data, ref=np.max)
+                # s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
+            else:
+                missed_songs.append(full_path)
+                continue
 
         chunked_data, num_chunks = chunk_data(data, features=features, chunk_size=chunk_size)
         repeated_labels = [torch.tensor(labels)] * num_chunks
@@ -133,7 +135,7 @@ def ParseData(subset_file_name, data_location, output_directory, features=96, ch
             validate_song_set.extend(chunked_data)
             validate_label_set.extend(repeated_labels)
 
-        if len(song_set) >= chunks_per_batch:
+        if len(song_set) >= chunks_per_batch * 2:
             # Randomly sample between both sets for the chunks from the song we want to use
             combined = list(zip(song_set, label_set))
             random.shuffle(combined)
@@ -166,6 +168,9 @@ def ParseData(subset_file_name, data_location, output_directory, features=96, ch
     save_file(torch.stack(label_set), f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
     save_file(torch.stack(validate_song_set[:chunks_per_batch]), f"{output_directory}/test_set/data/{count:04d}.pt")
     save_file(torch.stack(validate_label_set[:chunks_per_batch]), f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
+
+    save_file(missed_songs, f"{output_directory}missed_songs.pt")
+    print(f"Couldn't find {len(missed_songs)} songs.")
 
 
 def save_file(object, file_path):
@@ -210,3 +215,19 @@ def chunk_data(data, features=96, chunk_size=256):
     data = data.permute(1, 0, 2)
 
     return list(data), N
+
+def show_mel(mel):
+    num_plots = len(mel)
+    fig, axes = plt.subplots(1, num_plots, figsize=(5 * num_plots, 4))
+
+    if num_plots == 1:
+        axes = [axes]
+
+    for i, mel in enumerate(mel):
+        ax = axes[i]
+        mel = mel.squeeze()  # remove channel if present
+        im = ax.imshow(mel, origin='lower', aspect='auto', cmap='magma')
+        fig.colorbar(im, ax=ax)
+
+    plt.tight_layout()
+    plt.show()

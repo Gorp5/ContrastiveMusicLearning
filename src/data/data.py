@@ -7,7 +7,7 @@ import numpy as np
 
 
 class StreamingSongDataset(Dataset):
-    def __init__(self, song_dir: str, label_dir: str, indices=None):
+    def __init__(self, song_dir: str, label_dir: str, transform=None, indices=None):
         self.song_files = sorted(os.listdir(song_dir))
         self.label_files = sorted(os.listdir(label_dir))
         if indices is not None:
@@ -16,6 +16,7 @@ class StreamingSongDataset(Dataset):
 
         self.song_dir = song_dir
         self.label_dir = label_dir
+        self.transform = transform
 
     def __len__(self):
         return len(self.song_files)
@@ -23,6 +24,9 @@ class StreamingSongDataset(Dataset):
     def __getitem__(self, idx):
         song = torch.load(os.path.join(self.song_dir, self.song_files[idx]), map_location='cpu')
         label = torch.load(os.path.join(self.label_dir, self.label_files[idx]), map_location='cpu')
+
+        if self.transform:
+            song = self.transform(song.clone())
 
         return song, label
 
@@ -107,12 +111,11 @@ class AudioDatasetTriplets(Dataset):
 
 class AddGaussianNoise:
     def __init__(self, mean=0.0, std=0.01):
-        self.mean = mean
-        self.std = std
+        self.mean = torch.tensor(mean)
+        self.std = torch.tensor(std)
 
     def __call__(self, tensor):
-        return tensor + torch.randn_like(tensor) * self.std + self.mean
-
+        return tensor + torch.randn_like(tensor) * torch.normal(std=self.std, mean=self.mean)
 class TimeMasking:
     def __init__(self, max_mask_pct=0.1):
         self.max_mask_pct = max_mask_pct

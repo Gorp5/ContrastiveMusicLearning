@@ -7,7 +7,7 @@ class ShortChunkCNN(nn.Module):
     Deeper layers, smaller pooling (2x2).
     '''
     def __init__(self,
-                n_channels=128,
+                n_channels=64,
                 sample_rate=16000,
                 n_fft=512,
                 f_min=0.0,
@@ -19,20 +19,19 @@ class ShortChunkCNN(nn.Module):
         # self.spec_bn = nn.BatchNorm2d(1)
 
         # CNN
-        self.layer1 = Conv_2d(1, n_channels, pooling=2)
-        self.layer2 = Conv_2d(n_channels, n_channels, pooling=2)
-        self.layer3 = Conv_2d(n_channels, n_channels*2, pooling=2)
-        self.layer4 = Conv_2d(n_channels*2, n_channels*2, pooling=2)
-        self.layer5 = Conv_2d(n_channels*2, n_channels*2, pooling=1)
-        self.layer6 = Conv_2d(n_channels*2, n_channels*2, pooling=2)
-        self.layer7 = Conv_2d(n_channels*2, n_channels*4, pooling=1)
-        self.layer8 = Conv_2d(n_channels*4, n_channels*4, pooling=2)
+        self.layer1 = Conv_2d(1,  n_channels,       shape=(3, 3),   stride=(1, 1),      pool=(2, 2))
+        self.layer2 = Conv_2d(n_channels,     n_channels,       shape=(3, 3),   stride=(1, 1),      pool=(2, 2))
+        self.layer3 = Conv_2d(n_channels,     n_channels * 2,   shape=(3, 3),   stride=(1, 1),      pool=(2, 2))
+        self.layer4 = Conv_2d(n_channels * 2, n_channels * 2,   shape=(3, 3),   stride=(1, 1),      pool=(2, 2))
+        self.layer5 = Conv_2d(n_channels * 2, n_channels * 2,   shape=(3, 3),   stride=(1, 1),      pool=(2, 2))
+        self.layer6 = Conv_2d(n_channels * 2, n_channels * 2,   shape=(3, 3),   stride=(1, 1),      pool=(2, 2))
+        self.layer7 = Conv_2d(n_channels * 2, n_channels * 4,   shape=(3, 3),   stride=(1, 1),      pool=(2, 2))
 
 
         # Dense
-        self.dense1 = nn.Linear(n_channels*4, n_channels*4)
-        self.bn = nn.BatchNorm1d(n_channels*4)
-        self.dense2 = nn.Linear(n_channels*4, n_class)
+        self.dense1 = nn.Linear(n_channels * 4, n_channels * 4)
+        self.bn = nn.BatchNorm1d(n_channels * 4)
+        self.dense2 = nn.Linear(n_channels * 4, n_class)
         self.dropout = nn.Dropout(0.5)
         self.relu = nn.ReLU()
 
@@ -51,8 +50,7 @@ class ShortChunkCNN(nn.Module):
         x = self.layer5(x)
         x = self.layer6(x)
         x = self.layer7(x)
-        x = self.layer8(x)
-        x = x.squeeze(2)
+        x = x.squeeze(-2)
 
         # Global Max Pooling
         if x.size(-1) != 1:
@@ -69,13 +67,17 @@ class ShortChunkCNN(nn.Module):
 
         return x
 
+
 class Conv_2d(nn.Module):
-    def __init__(self, input_channels, output_channels, shape=3, stride=1, pooling=2):
+    def __init__(self, input_channels, output_channels, shape=(3, 3), stride=(1, 1), pool=(2, 2)):
         super(Conv_2d, self).__init__()
-        self.conv = nn.Conv2d(input_channels, output_channels, shape, stride=stride, padding=shape//2)
-        self.bn = nn.BatchNorm2d(output_channels)
-        self.relu = nn.ReLU()
-        self.mp = nn.MaxPool2d(pooling)
+        padding = (shape[0] // 2, shape[1] // 2)
+        self.block = nn.Sequential(
+            nn.Conv2d(input_channels, output_channels, kernel_size=shape, stride=stride, padding=padding),
+            nn.BatchNorm2d(output_channels),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=pool)
+        )
+
     def forward(self, x):
-        out = self.mp(self.relu(self.bn(self.conv(x))))
-        return out
+        return self.block(x)

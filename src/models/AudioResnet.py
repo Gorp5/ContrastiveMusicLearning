@@ -12,16 +12,19 @@ class AudioResnet(nn.Module):
 
         # Stack1
         self.stack1a = ResidualBlock(64, downsample=True)
-        self.stack1 = nn.ModuleList([ResidualBlock(64) for _ in range(2)])
+        self.stack1 = nn.ModuleList([ResidualBlock(64) for _ in range(3)])
 
         self.stack2a = ResidualBlock(128, downsample=True)
-        self.stack2 = nn.ModuleList([ResidualBlock(128) for _ in range(5)])
+        self.stack2 = nn.ModuleList([ResidualBlock(128) for _ in range(4)])
 
         self.stack3a = ResidualBlock(256, downsample=True)
-        self.stack3 = nn.ModuleList([ResidualBlock(256) for _ in range(5)])
+        self.stack3 = nn.ModuleList([ResidualBlock(256) for _ in range(3)])
 
         self.stack4a = ResidualBlock(512, downsample=True)
         self.stack4 = nn.ModuleList([ResidualBlock(512) for _ in range(2)])
+        #
+        # self.stack5a = ResidualBlock(2048, downsample=True)
+        # self.stack5 = nn.ModuleList([ResidualBlock(2048) for _ in range(1)])
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fcOut = nn.Linear(512, num_classes, bias=True)
