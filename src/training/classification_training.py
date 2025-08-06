@@ -1,16 +1,18 @@
+import os
+
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
 
 from utils.visualization import visualize_ROC_PR_AUC
 from datasets import tqdm
 from torch import optim
-from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 def train_classifier(model, test_dataloader, train_dataloader, config, show_graph=False):
     # Training setup
-    torch.save(config, f".\\{config.save_path}\\Config.pt")
+    file_path = f".\\{config.save_path}\\Config.pt"
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    torch.save(config, file_path)
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     #scheduler = CosineAnnealingLR(optimizer, T_max=config.steps_per_cycle, eta_min=config.min_learning_rate )

@@ -27,6 +27,7 @@ class AudioResnet(nn.Module):
         # self.stack5 = nn.ModuleList([ResidualBlock(2048) for _ in range(1)])
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.dropout = nn.Dropout(0.5)
         self.fcOut = nn.Linear(512, num_classes, bias=True)
         #self.softmax = nn.LogSoftmax(dim=-1)
 
@@ -39,6 +40,7 @@ class AudioResnet(nn.Module):
         x = self.convIn(x)
         x = self.bnIn(x)
         x = self.relu(x)
+        x = self.dropout(x)
         x = self.maxpoolIn(x)
 
         x = self.stack1a(x)
