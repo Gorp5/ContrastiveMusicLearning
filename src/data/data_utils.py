@@ -1,9 +1,8 @@
 import random
 
 import torch
-from torch.utils.data import Dataset
 import os
-import numpy as np
+from torch.utils.data import Dataset
 
 
 class StreamingSongDataset(Dataset):
