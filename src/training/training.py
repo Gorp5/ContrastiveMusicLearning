@@ -192,8 +192,8 @@ def trainTriplet(
             else:
                 reconstructed, latents = model(all_segments, all_masks)
 
-            #reconstruction_loss = loss_utils.combined_loss(reconstructed, all_segments)
-            reconstructed_loss = 0
+            reconstruction_loss = loss_utils.combined_loss(reconstructed, all_segments)
+            #reconstructed_loss = 0
             anchor_latents, positive_latents, negative_latents = torch.split(latents, B, dim=0)
 
             anchor_positive_loss = loss_utils.cosine_similarity(anchor_latents, positive_latents)

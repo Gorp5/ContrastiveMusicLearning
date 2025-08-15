@@ -48,46 +48,6 @@ class RoPEALiBiMultiheadAttention(nn.Module):
 
         output = output.float()
 
-        # #query, key, value: [Batch, Time, Dim]
-        # B, L, _ = query.shape
-        #
-        # # Linear projections
-        # q = self.q_proj(query)
-        # q = q.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        #
-        # k = self.k_proj(key)
-        # k = k.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        #
-        # v = self.v_proj(value)
-        # v = v.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
-        #
-        # # Apply RoPE to q and k
-        # if pos_emb is not None:
-        #     q = apply_RoPE(q, pos_emb)
-        #     k = apply_RoPE(k, pos_emb)
-        #
-        # # Compute raw attention scores
-        # attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
-        # if mask is not None:
-        #     # Assuming mask is [batch_size, seq_len] with True at positions to mask
-        #     mask = mask.unsqueeze(1).unsqueeze(2)  # [batch_size, 1, 1, seq_len]
-        #     #mask = mask.expand(-1, attn_scores.size(1), attn_scores.size(2),-1)  # [batch_size, num_heads, seq_len, seq_len]
-        #     attn_scores.masked_fill_(mask, float('-inf'))
-        #
-        # # Add ALiBi bias
-        # if alibi_bias is not None:
-        #     attn_scores = attn_scores + alibi_bias.unsqueeze(0)
-        #
-        # # Regularization
-        # attn_weights = F.softmax(attn_scores, dim=-1)
-        # attn_weights = self.dropout(attn_weights)
-        #
-        # # Apply Attention
-        # attn_output = torch.matmul(attn_weights, v)
-        #
-        # # Reassemble
-        # attn_output = attn_output.transpose(1, 2).contiguous().view(B, L, self.embed_dim)
-        # output = self.out_proj(attn_output)
         return output
 
 

@@ -140,12 +140,10 @@ class NESTCNN(nn.Module):
 
         n_channels = cnn_initial_channels_dim
         self.to_patch_embedding = nn.Sequential(
-            Conv_2d(1, n_channels,          shape=(3, 3), stride=(1, 1), pool=(2, 2)),
-            Conv_2d(n_channels, n_channels * 2,         shape=(3, 3), stride=(1, 1), pool=(2, 2)),
-            Conv_2d(n_channels * 2, n_channels * 2,     shape=(3, 3), stride=(1, 1), pool=(1, 1)),
-            Conv_2d(n_channels * 2, n_channels * 4,     shape=(3, 3), stride=(1, 1), pool=(2, 2)),
-            Conv_2d(n_channels * 4, n_channels * 4,     shape=(3, 3), stride=(1, 1), pool=(1, 1)),
-            Conv_2d(n_channels * 4, n_channels * 8,     shape=(3, 3), stride=(1, 1), pool=(2, 2))
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=patch_height, p2=patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, dim),
+            nn.LayerNorm(dim),
         )
 
         block_repeats = cast_tuple(block_repeats, num_hierarchies)
