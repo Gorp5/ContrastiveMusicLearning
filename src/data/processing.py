@@ -130,7 +130,7 @@ def lp_solver(all_tracks, all_tags, songs_per_tag=250):
     return selected_songs, tag_breakdown
 
 
-def ParseBalanced(subset_file_name, data_location, output_directory, convert, target_per_genre=256):
+def ParseBalanced(subset_file_name, data_location, output_directory, convert, target_per_genre=256, chunk_size=256, chunks_per_batch=4096):
     subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
 
     tracks, tags, extra = commons.read_file(subset_file)
@@ -142,10 +142,9 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
     all_tags.update(tags['mood/theme'])
 
     #min_tag_count = min([len(t) for t in all_tags.values()])
-    chunks_per_batch = 4096
+
     chunks_per_song = None
     test_prob = 0.1
-    chunk_size = 256
     num_genres = 50
 
     count = 0
@@ -195,7 +194,15 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
         else:
             if os.path.exists(full_path):
                 audio, sr = librosa.load(full_path, sr=44100, mono=True)
-                data = librosa.feature.melspectrogram(y=audio, sr=sr)
+
+                win_length = int(round(0.025 * sr))  # ~1103 samples
+                hop_length = int(round(0.010 * sr))  # 441 samples
+                n_fft = 2048
+
+                data = librosa.feature.melspectrogram(
+                            y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
+                            n_mels=128, fmin=0, fmax=sr/2, power=2.0
+                        )
                 data = librosa.amplitude_to_db(data, ref=np.max)
                 # s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
             else:

@@ -1,17 +1,49 @@
 import torch.nn as nn
 import torch
-import torch.nn.functional as F
 import math
-#from torch.utils.checkpoint import checkpoint
 
 from flash_attn import flash_attn_func
 
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim, max_position_embeddings, base, device=None):
+        super().__init__()
+
+        # RoPE
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim))
+        t = torch.arange(max_position_embeddings, dtype=torch.float32, device=device)
+        freqs = torch.outer(t, inv_freq)
+
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.cos_cached = nn.Buffer(emb.cos(), persistent=False)
+        self.sin_cached = nn.Buffer(emb.sin(), persistent=False)
+
+    def forward(self):
+        return self.cos_cached, self.sin_cached
+
+def rotate_half(x: torch.Tensor):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+    # q, k: [bs, seq_len, num_heads, head_dim]
+    # cos, sin: [seq_len, head_dim]
+    orig_dtype = q.dtype
+    q = q.to(cos.dtype)
+    k = k.to(cos.dtype)
+
+    q_embed = (q * cos.unsqueeze(-2)) + (rotate_half(q) * sin.unsqueeze(-2))
+    k_embed = (k * cos.unsqueeze(-2)) + (rotate_half(k) * sin.unsqueeze(-2))
+
+    return q_embed.to(orig_dtype), k_embed.to(orig_dtype)
+
 class RoPEALiBiMultiheadAttention(nn.Module):
-    def __init__(self, d_model, num_heads, alibi_slopes, dropout=0.0):
+    def __init__(self, d_model, num_heads, dropout=0.0):
         super().__init__()
         assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
-
-        self.alibi_slopes = alibi_slopes.to('cuda', dtype=torch.float32)
 
         self.embed_dim = d_model
         self.num_heads = num_heads
@@ -24,24 +56,28 @@ class RoPEALiBiMultiheadAttention(nn.Module):
         self.out_proj = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, query, key, value, alibi_bias=None, pos_emb=None, mask=None):
-        query = query.half()
-        key = key.half()
-        value = value.half()
+    def forward(self, query, key, value, alibi_slopes=None, pos_emb=None, mask=None):
 
         QB, QL, _ = query.shape
-        KB, KL, _ = key.shape
-        VB, VL, _ = value.shape
 
-        query = query.view(QB, QL, self.num_heads, self.head_dim)
-        key = key.view(KB, KL, self.num_heads, self.head_dim)
-        value = value.view(VB, VL, self.num_heads, self.head_dim)
+        # Linear projections
+        q = self.q_proj(query).view(QB, QL, self.num_heads, self.head_dim)
+        k = self.k_proj(key).view(QB, QL, self.num_heads, self.head_dim)
+        v = self.v_proj(value).view(QB, QL, self.num_heads, self.head_dim)
+
+        if pos_emb is not None:
+            cos, sin = pos_emb()
+            q, k = apply_rotary_pos_emb(q, k, cos, sin)
+
+        q = q.half()
+        k = k.half()
+        v = v.half()
 
         output = flash_attn_func(
-            query, key, value,
+            q, k, v,
             dropout_p=0.0,
             causal=True,
-            alibi_slopes=self.alibi_slopes
+            alibi_slopes=alibi_slopes
         )
 
         output = output.view(QB, QL, self.embed_dim)
@@ -55,7 +91,7 @@ class RoPEALiBiTransformerEncoderLayer(nn.Module):
     def __init__(self, d_model=256, num_heads=16, dim_feedforward=256, dropout=0.1):
         super().__init__()
 
-        self.self_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, get_alibi_slopes(num_heads), dropout=dropout)
+        self.self_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, dropout=dropout)
 
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
@@ -68,11 +104,12 @@ class RoPEALiBiTransformerEncoderLayer(nn.Module):
 
         self.activation = nn.GELU()
 
-    def forward(self, src, alibi_bias, pos_emb, mask):
+    def forward(self, src, alibi_slopes, pos_emb, mask):
         # src: [Batch, Time, Dim]
+        t = src.size(1)
 
         # Self-attention Block
-        src2 = self.self_attn(src, src, src, alibi_bias, pos_emb, mask)
+        src2 = self.self_attn(src, src, src, alibi_slopes, pos_emb, mask)
         src = src + self.dropout1(src2)
         src = self.norm1(src)
 
@@ -90,47 +127,46 @@ class RoPEALiBiTransformerEncoderLayer(nn.Module):
 
 class RoPEALiBiTransformerEncoder(nn.Module):
     def __init__(self, num_layers=8, d_model=256, num_heads=16, dim_feedforward=256, seq_len=256, dropout=0.1,
-                 checkpointing=False, use_rope=True, use_alibi=True, device='cpu'):
+                 checkpointing=False, use_rope=False, use_alibi=False, device='cpu'):
         super().__init__()
+
         self.layers = nn.ModuleList([
             RoPEALiBiTransformerEncoderLayer(d_model=d_model, num_heads=num_heads, dim_feedforward=dim_feedforward,
-                                             dropout=dropout)
+                                             dropout=dropout).to(device, dtype=torch.float32)
             for _ in range(num_layers)
         ])
 
         self.checkpointing = checkpointing
 
         if use_alibi:
-                self.register_buffer("alibi_bias", build_causal_alibi_bias(num_heads, seq_len, seq_len, device).to('cuda', dtype=torch.float32))
+                self.register_buffer("alibi_slopes", get_hierarchical_slopes(num_heads).to(device, dtype=torch.float32))
         else:
-            self.alibi_bias = None
+            self.alibi_slopes = None
 
         if use_rope:
-            self.register_buffer("pos_emb", get_RoPE_matrix(seq_len, d_model // num_heads, device).to('cuda', dtype=torch.float32))
+            self.rope_matrix = RotaryEmbedding(dim=d_model // num_heads,
+                                              max_position_embeddings=seq_len,
+                                              base=10000)
         else:
-            self.pos_emb = None
+            self.rope_matrix = None
 
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, src, mask=None):
         for layer in self.layers:
-            # if self.checkpointing:
-            #     src = checkpoint(layer, src, self.alibi_bias, self.pos_emb, mask)
-            # else:
-            src = layer(src, self.alibi_bias, self.pos_emb, mask)
+            src = layer(src, self.alibi_slopes, self.rope_matrix, mask)
 
         return self.norm(src)
 
-    def set_checkpointing(self, checkpointing):
-        self.checkpointing = checkpointing
 
 
 class RoPEALiBiTransformerDecoderLayer(nn.Module):
     def __init__(self, d_model=256, num_heads=16, dim_feedforward=256, dropout=0.1):
         super().__init__()
-        self.self_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, get_alibi_slopes(num_heads), dropout=dropout)
 
-        self.cross_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, get_alibi_slopes(num_heads), dropout=dropout)
+        self.self_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, dropout=dropout)
+        self.cross_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, dropout=dropout)
+
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.linear2 = nn.Linear(dim_feedforward, d_model)
 
@@ -144,23 +180,18 @@ class RoPEALiBiTransformerDecoderLayer(nn.Module):
 
         self.activation = nn.GELU()
 
-    def forward(self, tgt, memory, self_alibi_bias, self_pos_emb, cross_alibi_bias, cross_pos_emb, mask):
+    def forward(self, tgt, memory, alibi_slopes, pos_emb, mask):
         t = tgt.size(1)
-        L = memory.size(1)
+        l = memory.size(1)
 
-        # slice biases and position embeddings
-        bias_self = self_alibi_bias[:, :t, :t] if self_alibi_bias is not None else None
-        pos_self = self_pos_emb[:t] if self_pos_emb is not None else None
-        bias_cross = cross_alibi_bias[:, :t, :L] if cross_alibi_bias is not None else None
-        pos_cross = cross_pos_emb[:L] if cross_pos_emb is not None else None
 
         # Self Attention Block
-        tgt2 = self.self_attn(tgt, tgt, tgt, bias_self, pos_self, mask)
+        tgt2 = self.self_attn(tgt, tgt, tgt, alibi_slopes=alibi_slopes, pos_emb=pos_emb, mask=mask)
         tgt2 = self.dropout1(tgt2)
         tgt = tgt + self.norm1(tgt2)
 
         # Cross-attention Block
-        tgt2 = self.cross_attn(tgt, memory, memory, bias_cross, pos_cross, mask)
+        tgt2 = self.cross_attn(tgt, memory, memory, alibi_slopes=alibi_slopes, pos_emb=pos_emb, mask=mask)
         tgt2 = self.dropout2(tgt2)
         tgt = tgt + self.norm2(tgt2)
 
@@ -179,6 +210,7 @@ class RoPEALiBiTransformerDecoderLayer(nn.Module):
 class RoPEALiBiTransformerDecoder(nn.Module):
     def __init__(self, num_layers=8, d_model=256, num_heads=16, dim_feedforward=256, seq_len=256, dropout=0.1, checkpointing=False, use_rope=True, use_alibi=True, device='cpu'):
         super().__init__()
+
         self.layers = nn.ModuleList([
             RoPEALiBiTransformerDecoderLayer(d_model=d_model, num_heads=num_heads, dim_feedforward=dim_feedforward, dropout=dropout)
             for _ in range(num_layers)
@@ -187,28 +219,22 @@ class RoPEALiBiTransformerDecoder(nn.Module):
         self.checkpointing = checkpointing
 
         if use_alibi:
-            self.register_buffer("self_alibi_bias", build_causal_alibi_bias(num_heads, seq_len, seq_len, device))
-            self.register_buffer("cross_alibi_bias", build_causal_alibi_bias(num_heads, seq_len, seq_len, device))
+                self.alibi_slopes = get_hierarchical_slopes(num_heads).to(device, dtype=torch.float32)
         else:
-            self.self_alibi_bias = None
-            self.cross_alibi_bias = None
+            self.alibi_slopes = None
 
         if use_rope:
-            self.register_buffer("self_pos_emb", get_RoPE_matrix(seq_len, d_model // num_heads, device))
-            self.register_buffer("cross_pos_emb", get_RoPE_matrix(seq_len, d_model // num_heads, device))
+            self.rope_matrix = RotaryEmbedding(dim=d_model // num_heads,
+                                              max_position_embeddings=seq_len,
+                                              base=10000).to(device, dtype=torch.float32)
         else:
-            self.self_pos_emb = None
-            self.cross_pos_emb = None
-
+            self.rope_matrix = None
 
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, tgt, memory, mask=None):
         for layer in self.layers:
-            # if self.checkpointing:
-            #     tgt = checkpoint(layer, tgt, memory, self.self_alibi_bias, self.self_pos_emb, self.cross_alibi_bias, self.cross_pos_emb, mask)
-            # else:
-            tgt = layer(tgt, memory, self.self_alibi_bias, self.self_pos_emb, self.cross_alibi_bias, self.cross_pos_emb, mask)
+            tgt = layer(tgt, memory, self.alibi_slopes, self.rope_matrix,  mask)
 
         return self.norm(tgt)
 
@@ -258,16 +284,27 @@ def get_alibi_slopes(nheads):
     def get_slopes_power_of_2(nheads):
         start = 2 ** (-(2 ** -(math.log2(nheads) - 3)))
         ratio = start
-        return [start * ratio**i for i in range(nheads)]
+        return torch.tensor([start * ratio**i for i in range(nheads)])
 
     if math.log2(nheads).is_integer():
-        return torch.tensor(get_slopes_power_of_2(nheads))
+        return get_slopes_power_of_2(nheads)
     else:
         closest_power_of_2 = 2 ** math.floor(math.log2(nheads))
-        return torch.tensor(
-            get_slopes_power_of_2(closest_power_of_2)
-            + get_alibi_slopes(2 * closest_power_of_2)[0::2][: nheads - closest_power_of_2]
+        return torch.cat(
+            (get_slopes_power_of_2(closest_power_of_2),
+            get_alibi_slopes(2 * closest_power_of_2)[0::2][: nheads - closest_power_of_2])
         )
+
+def get_hierarchical_slopes(nheads, nlevels=2):
+    base_slopes = get_alibi_slopes(nheads // nlevels)  # [nheads]
+
+    # Construct hierarchical slopes: each level can be a scaled copy of base slopes
+    slopes = []
+    for lvl in range(nlevels):
+        scale = 2.0 ** (-lvl)
+        slopes.append(base_slopes * scale)
+
+    return torch.stack(slopes, dim=0)  # [nlevels, nheads]
 
 def build_bidirectional_symmetrical_alibi_bias(n_heads, sample_len, device):
 

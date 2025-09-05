@@ -115,27 +115,7 @@ class AddGaussianNoise:
 
     def __call__(self, tensor):
         return tensor + torch.randn_like(tensor) * torch.normal(std=self.std, mean=self.mean)
-class TimeMasking:
-    def __init__(self, max_mask_pct=0.1):
-        self.max_mask_pct = max_mask_pct
 
-    def __call__(self, tensor):
-        T = tensor.shape[-1]
-        mask_size = int(T * self.max_mask_pct)
-        start = random.randint(0, T - mask_size)
-        tensor[:, start:start+mask_size] = 0
-        return tensor
-
-class FrequencyMasking:
-    def __init__(self, max_mask_pct=0.1):
-        self.max_mask_pct = max_mask_pct
-
-    def __call__(self, tensor):
-        F = tensor.shape[-2]
-        mask_size = int(F * self.max_mask_pct)
-        start = random.randint(0, F - mask_size)
-        tensor[start:start+mask_size, :] = 0
-        return tensor
 
 class Compose:
     def __init__(self, transforms):

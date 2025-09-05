@@ -35,8 +35,8 @@ def train_autoencode(model, test_dataloader, train_dataloader, config, show_grap
         previous_mid_epoch_total = 0
         mid_epoch_total = 0
         batch_steps = 0
+        steps_in_batch = len(train_dataloader)
         for batch in tqdm(train_dataloader):
-
             inputs, labels = batch
             inputs = (inputs - inputs.mean(dim=[1, 2, 3], keepdim=True)) / (inputs.std(dim=[1, 2, 3], keepdim=True) + 1e-6)
 
@@ -68,12 +68,9 @@ def train_autoencode(model, test_dataloader, train_dataloader, config, show_grap
             mid_epoch_total += loss_per_batch / minibatch_len
             batch_steps += 1
 
-            if batch_steps % 9 == 0 or step == 2:
-                previous_mid_epoch_average = mid_epoch_total / batch_steps
-                print(f"Mid Epoch Loss: {previous_mid_epoch_average:0.4}\n")
-                mid_epoch_total = 0
-                batch_steps = 0
+            previous_mid_epoch_average = mid_epoch_total / batch_steps
 
+            print(f"Mid-Epoch Loss [{batch_steps}/{steps_in_batch}]: {previous_mid_epoch_average:0.4}\n")
 
         mse_loss, cos_loss, all_probs, all_labels = evaluate_autoencode(model, test_dataloader, config)
 

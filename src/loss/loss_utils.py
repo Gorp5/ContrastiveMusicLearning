@@ -84,7 +84,6 @@ def cross_relation_2(prediction: torch.Tensor, input: torch.Tensor, eps: float =
     loss = on_diag + lambda_offdiag * off_diag
     return loss
 
-
 def cross_relation_fft_2(prediction, input, eps=1e-9, lambda_offdiag=0.005):
     # Compute FFT along the feature/time dimension, e.g. last dim
     pred_fft = torch.fft.fft(prediction, dim=-1).real  # or .abs(), depending on use case

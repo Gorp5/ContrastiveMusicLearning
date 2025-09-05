@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -12,6 +13,10 @@ def train_classifier(model, test_dataloader, train_dataloader, config, show_grap
     # Training setup
     file_path = f".\\{config.save_path}\\Config.pt"
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+    loss_file = f".\\{config.save_path}\\loss.txt"
+    os.makedirs(os.path.dirname(loss_file), exist_ok=True)
+
     torch.save(config, file_path)
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
@@ -23,12 +28,13 @@ def train_classifier(model, test_dataloader, train_dataloader, config, show_grap
     warmup_threshold = config.warmup_threshold
     final_gamma = config.gamma
 
-    torch.autograd.set_detect_anomaly(True)
-
     # Training loop
     step = 1
     for epoch in range(config.num_epochs):
         train_loss_total = 0
+
+        model.train()
+
         for batch in tqdm(train_dataloader):
             inputs, labels = batch
 
@@ -42,6 +48,7 @@ def train_classifier(model, test_dataloader, train_dataloader, config, show_grap
 
             loss_per_batch = 0
             minibatch_len = len(data_minibatches)
+            losses_this_minibatch = []
             for i, (data_minibatch, label_minibatch) in enumerate(zip(data_minibatches, label_minibatches)):
                 data_minibatch = data_minibatch.to("cuda", config.dtype)
                 label_minibatch = label_minibatch.to("cuda", config.dtype)
@@ -49,32 +56,56 @@ def train_classifier(model, test_dataloader, train_dataloader, config, show_grap
                 outputs = model(data_minibatch)
                 loss = criterion(outputs, label_minibatch)
 
+                # loss = loss.view(-1)
+                # k = int(0.7 * len(loss))  # keep top 70%
+                # topk = torch.topk(loss, k).values
+                # loss = topk.mean()
+                # loss.backward()
+
                 optimizer.zero_grad()
-                with torch.autograd.set_detect_anomaly(True):
-                    loss.backward()
+                loss.backward()
                 optimizer.step()
 
-                loss_per_batch += loss.item()
-
-            if step / total_steps > warmup_threshold:
-                config.criterion.set_gamma(np.min((step / total_steps, 1)) * final_gamma)
+                l = loss.item()
+                loss_per_batch += l
+                losses_this_minibatch.append(l)
 
             step += 1
+            loss_average = loss_per_batch / minibatch_len
+            with open(loss_file, "a") as file:
+                file.write(f"Batch {step} | ------------------------\n")
+                for index, loss in enumerate(losses_this_minibatch):
+                    file.write(f"Minibatch {index + 1}:\nLoss: {loss}\n")
+                file.write(f"Batch {step} | Average: {loss_average} |------------------------\n")
 
             train_loss_total += loss_per_batch / minibatch_len
 
+        model.eval()
         test_loss_average, all_probs, all_labels = evaluate_classification(model, test_dataloader, config)
+
+        probs = np.vstack(all_probs)  # from evaluate_classification
+        print("probs mean,std,min,max:", probs.mean(), probs.std(), probs.min(), probs.max())
+        print("frac > 0.5:", (probs > 0.5).mean())
+
+        roc = None
+        pr = None
 
         if show_graph:
             all_p_tensor = torch.stack([torch.tensor(x) for x in all_probs], dim=0).float()
             all_l_tensor = torch.stack([torch.tensor(x) for x in all_labels], dim=0).int()
 
-            visualize_ROC_PR_AUC(all_p_tensor, all_l_tensor)
+            roc, pr = visualize_ROC_PR_AUC(all_p_tensor, all_l_tensor)
 
         train_loss_average = train_loss_total / len(train_dataloader)
 
         print(f"Epoch {epoch + 1}, Train Loss: {train_loss_average:.4f}")
         print(f"Epoch {epoch + 1}, Test Loss: {test_loss_average:.4f}")
+
+        with open(loss_file, "a") as file:
+            file.write(f"Epoch {epoch + 1}:\nTraining Loss: {train_loss_average}\n Test Loss: {test_loss_average}\n")
+            if roc or pr:
+                file.write(f"ROC-AUC: {roc}\n PR-AUC: {pr}\n")
+            file.write(f"\n")
 
         torch.save(model, f".\\{config.save_path}\\Classifier-Epoch-{epoch + 1}.pt")
 

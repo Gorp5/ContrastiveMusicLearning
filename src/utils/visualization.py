@@ -47,6 +47,7 @@ def visualize_ROC_PR_AUC(probs, labels):
     plt.show()
 
     print(f"ROC-AUC: {roc_auc_macro:.4f}\tPR-AUC: {pr_auc_macro:.4f}")
+    return roc_auc_macro, pr_auc_macro
 
 
 def show_weights(weights):

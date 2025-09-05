@@ -10,7 +10,7 @@ from models.RopeALiBiModelComponents import get_alibi_slopes
 
 class AudioViT(nn.Module):
     def __init__(self, patch_size=8, input_dim=128, num_heads=16, encoder_layers=8, decoder_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
-                 latent_space=256, use_alibi=True, use_pooling=False):
+                 latent_space=256, use_alibi=True, use_pooling=False, CLS=False, use_rope=True):
         super(AudioViT, self).__init__()
 
         patch_dim = patch_size * patch_size
@@ -30,6 +30,7 @@ class AudioViT(nn.Module):
             nn.LayerNorm(d_model),
         )
 
+        self.CLS = CLS
         self.projection_gelu = nn.GELU()
 
         # Project latent back to initial query space (one vector per patch)
@@ -37,7 +38,6 @@ class AudioViT(nn.Module):
 
         # Learnable positional embeddings for queries
         self.query_pos = nn.Parameter(torch.randn(self.total_patches, self.model_dim))
-
         self.latent_to_q = nn.Linear(self.latent_space, self.model_dim * self.total_patches)
 
         self.length = length
@@ -50,12 +50,16 @@ class AudioViT(nn.Module):
                                                                             dropout=dropout,
                                                                             checkpointing=checkpointing,
                                                                             use_alibi=use_alibi,
-                                                                            use_rope=False,
-                                                                            device='cuda'
-                                                                            )
+                                                                            use_rope=use_rope,
+                                                                            device='cuda')
+
         self.use_pooling = use_pooling
         if self.use_pooling:
             self.attention_pooling = AttentionPooling(d_model=d_model, latent_dim=latent_space, num_heads=8)
+        elif self.CLS:
+            self.class_token = torch.nn.Parameter(
+                torch.randn(1, 1, d_model)
+            )
         else:
             self.encode_to_latent = nn.Linear(d_model * self.total_patches, latent_space)
             self.encode_to_latent_gelu = nn.GELU()
@@ -63,7 +67,7 @@ class AudioViT(nn.Module):
         # Latent Space Normalization
         self.norm = nn.LayerNorm(latent_space)
 
-        self.encode_from_latent = nn.Linear(latent_space, d_model * self.total_patches)
+        self.encode_from_latent = nn.Linear(latent_space, self.model_dim * self.total_patches)
         self.encode_from_latent_gelu = nn.GELU()
 
         self.decoder = RopeALiBiModelComponents.RoPEALiBiTransformerDecoder(num_layers=decoder_layers,
@@ -74,7 +78,7 @@ class AudioViT(nn.Module):
                                                                             dropout=dropout,
                                                                             checkpointing=checkpointing,
                                                                             use_alibi=use_alibi,
-                                                                            use_rope=False,
+                                                                            use_rope=use_rope,
                                                                             device='cuda')
 
         self.from_patch_embedding = nn.Sequential(
@@ -99,13 +103,14 @@ class AudioViT(nn.Module):
         # Encoder Block
         memory = self.encoder(memory, mask)  # Pass through Transformer encoder
 
-        # Reshape for decoder input (Concatenation)
-        memory = memory.reshape(memory.size(0), -1)
+
 
         # Project to Latent Space
         if self.use_pooling:
             memory = self.attention_pooling(memory, mask)
         else:
+            # Reshape for decoder input (Concatenation)
+            memory = memory.reshape(memory.size(0), -1)
             memory = self.encode_to_latent(memory)
             memory = self.encode_to_latent_gelu(memory)
 

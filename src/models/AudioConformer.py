@@ -8,7 +8,7 @@ from models.RopeALiBiModelComponents import RoPEALiBiMultiheadAttention
 
 class AudioConformer(nn.Module):
     def __init__(self, input_dim=64, num_heads=16, encoder_layers=16, decoder_layers=8, length=256, d_model=256, dim_feedforward=512, kernel_size=5, dropout=0.1,
-                 latent_space=64, name_extension="", autoregressive=False):
+                 latent_space=64, name_extension="", autoregressive=False, use_alibi=False):
         super(AudioConformer, self).__init__()
         self.name = f"AudioConformer-LatentSpace{latent_space}-Heads{num_heads}-TrasformerLayers{encoder_layers}-DModel{length}-Dropout{dropout}{name_extension}"
 
@@ -24,8 +24,9 @@ class AudioConformer(nn.Module):
                                                                     d_model=d_model,
                                                                     num_heads=num_heads,
                                                                     dim_feedforward=dim_feedforward,
-                                                                    seq_len=256,
+                                                                    seq_len=length,
                                                                     dropout=dropout,
+                                                                    use_alibi=use_alibi,
                                                                     device='cuda')
 
         self.encode_to_latent = nn.Linear(d_model * length, latent_space)
@@ -42,8 +43,9 @@ class AudioConformer(nn.Module):
                                                                     d_model=d_model,
                                                                     num_heads=num_heads,
                                                                     dim_feedforward=dim_feedforward,
-                                                                    seq_len=256,
+                                                                    seq_len=length,
                                                                     dropout=dropout,
+                                                                    use_alibi=use_alibi,
                                                                     device='cuda')
 
         # Last Linear Layer
@@ -53,12 +55,15 @@ class AudioConformer(nn.Module):
         self.autoregressive = autoregressive
 
     def forward(self, x, mask=None):
+        x = x.permute(0, 2, 1)
         latent = self.to_latent(x, mask)
 
         if self.autoregressive:
             memory = self.from_latent_Autoregressive(latent, mask=mask, tgt=x[:, :-1])
         else:
             memory = self.from_latent(latent, mask)
+
+        memory = memory.permute(0, 2, 1)
         return memory, latent
 
     def to_latent(self, x, mask):
