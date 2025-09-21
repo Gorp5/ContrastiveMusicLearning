@@ -1,11 +1,7 @@
 import os
 import time
 
-import numpy as np
-import torch
-
 from loss.loss_utils import *
-from utils.visualization import visualize_ROC_PR_AUC
 from datasets import tqdm
 from torch import optim
 

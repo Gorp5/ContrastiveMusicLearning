@@ -5,7 +5,7 @@ from models import RopeALiBiModelComponents
 
 class AudioTransformerClassifier(nn.Module):
     def __init__(self,input_dim=128, num_heads=16, encoder_layers=16, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
-                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False, num_classes=50):
+                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False, num_classes=50, custom_slopes=True):
         super(AudioTransformerClassifier, self).__init__()
         self.name = f"AudioTransformerClassifier-LatentSpace{latent_space}-Heads{num_heads}-EncoderLayers{encoder_layers}-DModel{length}-Dropout{dropout}-AutoRegressive{autoregressive}{name_extension}"
 
@@ -25,6 +25,7 @@ class AudioTransformerClassifier(nn.Module):
                                                                            checkpointing=checkpointing,
                                                                             use_alibi=use_alibi,
                                                                             use_rope=use_rope,
+                                                                            custom_slopes=custom_slopes,
                                                                             device='cuda')
 
         self.classification_head = nn.Linear(d_model * length, num_classes)

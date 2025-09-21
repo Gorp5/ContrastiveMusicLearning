@@ -130,7 +130,7 @@ def lp_solver(all_tracks, all_tags, songs_per_tag=250):
     return selected_songs, tag_breakdown
 
 
-def ParseBalanced(subset_file_name, data_location, output_directory, convert, target_per_genre=256, chunk_size=256, chunks_per_batch=4096):
+def ParseBalanced(subset_file_name, data_location, output_directory, convert, target_per_genre=256, chunk_size=256, chunks_per_batch=4096, write_individually=False):
     subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
 
     tracks, tags, extra = commons.read_file(subset_file)
@@ -149,13 +149,13 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
 
     count = 0
 
-    song_set = []
-    label_set = []
-    id_set = []
-
-    validate_song_set = []
-    validate_label_set = []
-    validation_id_set = []
+    # song_set = []
+    # label_set = []
+    # id_set = []
+    #
+    # validate_song_set = []
+    # validate_label_set = []
+    # validation_id_set = []
 
     missed_songs = []
     all_tracks = {}
@@ -210,60 +210,73 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
                 continue
 
         chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
-        repeated_labels = [torch.tensor(labels)] * num_chunks
+        #repeated_labels = [torch.tensor(labels)] * num_chunks
 
         if chunks_per_song:
             num_samples = min(chunks_per_song, len(chunked_data) - 1)
-            repeated_labels = repeated_labels[:num_samples]
+            #repeated_labels = repeated_labels[:num_samples]
             chunked_data = random.sample(chunked_data, num_samples)
         count += 1
 
-        if random.random() > test_prob:
-            song_set.extend(chunked_data)
-            label_set.extend(repeated_labels)
-            id_set.append(track_id)
-        else:
-            validate_song_set.extend(chunked_data)
-            validate_label_set.extend(repeated_labels)
-            validation_id_set.append(track_id)
+        if write_individually:
+            if random.random() > test_prob:
+                for index in range(len(chunked_data)):
+                    save_file(chunked_data[index].clone(), f"{output_directory}/train_set/data/{count:04d}/{index:04d}.pt")
+                save_file(labels,
+                          f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
+            else:
+                for index in range(len(chunked_data)):
+                    save_file(chunked_data[index].clone(), f"{output_directory}/test_set/data/{count:04d}/{index:04d}.pt")
+                save_file(labels,
+                          f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
 
-        if len(song_set) >= chunks_per_batch * 2:
-            # Randomly sample between both sets for the chunks from the song we want to use
-            combined = list(zip(song_set, label_set))
-            random.shuffle(combined)
-            song_set, label_set = zip(*combined)
-
-            remainder_data = chunked_data[chunks_per_batch:]
-            remainder_labels = repeated_labels[chunks_per_batch:]
-
-            save_file(torch.stack(song_set[:chunks_per_batch]), f"{output_directory}/train_set/data/{count:04d}.pt")
-            save_file(torch.stack(label_set[:chunks_per_batch]),
-                      f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
-
-            song_set = remainder_data
-            label_set = remainder_labels
-
-        if len(validate_song_set) >= chunks_per_batch * 2:
-            combined = list(zip(validate_song_set, validate_label_set))
-            random.shuffle(combined)
-            validate_song_set, validate_label_set = zip(*combined)
-
-            remainder_data = chunked_data[chunks_per_batch:]
-            remainder_labels = repeated_labels[chunks_per_batch:]
-
-            save_file(torch.stack(validate_song_set[:chunks_per_batch]),
-                      f"{output_directory}/test_set/data/{count:04d}.pt")
-            save_file(torch.stack(validate_label_set[:chunks_per_batch]),
-                      f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
-
-            validate_song_set = remainder_data
-            validate_label_set = remainder_labels
-
-    save_file(torch.stack(song_set), f"{output_directory}/train_set/data/{count:04d}.pt")
-    save_file(torch.stack(label_set), f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
-    save_file(torch.stack(validate_song_set[:chunks_per_batch]), f"{output_directory}/test_set/data/{count:04d}.pt")
-    save_file(torch.stack(validate_label_set[:chunks_per_batch]),
-              f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
+    #     if random.random() > test_prob:
+    #         song_set.extend(chunked_data)
+    #         label_set.extend(repeated_labels)
+    #         id_set.append(track_id)
+    #     else:
+    #         validate_song_set.extend(chunked_data)
+    #         validate_label_set.extend(repeated_labels)
+    #         validation_id_set.append(track_id)
+    #
+    #
+    #     if len(song_set) >= chunks_per_batch * 2:
+    #         # Randomly sample between both sets for the chunks from the song we want to use
+    #         combined = list(zip(song_set, label_set))
+    #         random.shuffle(combined)
+    #         song_set, label_set = zip(*combined)
+    #
+    #         remainder_data = chunked_data[chunks_per_batch:]
+    #         remainder_labels = repeated_labels[chunks_per_batch:]
+    #
+    #         save_file(torch.stack(song_set[:chunks_per_batch]), f"{output_directory}/train_set/data/{count:04d}.pt")
+    #         save_file(torch.stack(label_set[:chunks_per_batch]),
+    #                   f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
+    #
+    #         song_set = remainder_data
+    #         label_set = remainder_labels
+    #
+    #     if len(validate_song_set) >= chunks_per_batch * 2:
+    #         combined = list(zip(validate_song_set, validate_label_set))
+    #         random.shuffle(combined)
+    #         validate_song_set, validate_label_set = zip(*combined)
+    #
+    #         remainder_data = chunked_data[chunks_per_batch:]
+    #         remainder_labels = repeated_labels[chunks_per_batch:]
+    #
+    #         save_file(torch.stack(validate_song_set[:chunks_per_batch]),
+    #                   f"{output_directory}/test_set/data/{count:04d}.pt")
+    #         save_file(torch.stack(validate_label_set[:chunks_per_batch]),
+    #                   f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
+    #
+    #         validate_song_set = remainder_data
+    #         validate_label_set = remainder_labels
+    #
+    # save_file(torch.stack(song_set), f"{output_directory}/train_set/data/{count:04d}.pt")
+    # save_file(torch.stack(label_set), f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
+    # save_file(torch.stack(validate_song_set[:chunks_per_batch]), f"{output_directory}/test_set/data/{count:04d}.pt")
+    # save_file(torch.stack(validate_label_set[:chunks_per_batch]),
+    #           f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
 
     save_file(missed_songs, f"{output_directory}missed_songs.pt")
 

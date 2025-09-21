@@ -1,9 +1,9 @@
 import random
-
 import torch
 import os
-from torch.utils.data import Dataset
 
+from libauc.losses.contrastive import GCLoss_v1
+from torch.utils.data import Dataset
 
 class StreamingSongDataset(Dataset):
     def __init__(self, song_dir: str, label_dir: str, transform=None, indices=None):
@@ -40,6 +40,8 @@ class AudioDataset(Dataset):
         self.data = []
         self.tags = []
 
+        self.random = random.seed(42)
+
         for filename in self.song_files:
             self.data.extend(torch.load(os.path.join(data_directory, filename)))
 
@@ -56,6 +58,80 @@ class AudioDataset(Dataset):
             data = self.transform(data.clone())
         return data, labels
 
+
+class StreamViewDataset(Dataset):
+    def __init__(self, song_dir: str, label_dir: str, transform=None):
+        self.song_folders = sorted(os.listdir(song_dir))
+        self.song_labels = sorted(os.listdir(label_dir))
+
+        #self.num_views = 2
+
+        self.song_dir = song_dir
+        self.label_dir = label_dir
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.song_folders)
+
+    def __getitem__(self, idx):
+        folder = os.path.join(self.song_dir, self.song_folders[idx])
+        files = os.listdir(folder)
+
+        rand_index_1 = random.randint(0, len(files) - 1)
+        rand_index_2 = random.randint(0, len(files[:rand_index_1] + files[rand_index_1 + 1:]))
+
+        view_1 = torch.load(os.path.join(self.song_dir, os.path.join(folder, files[rand_index_1])), map_location='cpu')
+        view_2 = torch.load(os.path.join(self.song_dir, os.path.join(folder, files[rand_index_2])), map_location='cpu')
+
+        if self.transform:
+            view_1 = self.transform(view_1.clone())
+            view_2 = self.transform(view_2.clone())
+
+        return idx, (view_1, view_2)
+
+
+class FlattenedChunkDataset(Dataset):
+    def __init__(self, song_dir: str, transform=None):
+        self.song_dir = song_dir
+        self.transform = transform
+
+        # Flatten the dataset: list of (song_folder, chunk_filename)
+        self.index_map = []
+        self.song_folders = sorted(os.listdir(song_dir))
+        for folder in self.song_folders:
+            folder_path = os.path.join(song_dir, folder)
+            chunk_files = sorted(os.listdir(folder_path))
+            for chunk_file in chunk_files:
+                self.index_map.append((folder, chunk_file))
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, idx):
+        """
+        Returns:
+          idx: a Python int representing global chunk index
+          view_pair: (view1, view2) two different chunks (views) from the same song
+        """
+        folder, chunk_file = self.index_map[idx]
+        folder_path = os.path.join(self.song_dir, folder)
+
+        # Load anchor view (the chunk corresponding to idx)
+        anchor_path = os.path.join(folder_path, chunk_file)
+        anchor = torch.load(anchor_path, map_location='cpu')
+
+        # Pick second chunk from same folder, but not the same file
+        chunk_files = os.listdir(folder_path)
+        other_file = random.choice([f for f in chunk_files if f != chunk_file])
+        other_path = os.path.join(folder_path, other_file)
+        other = torch.load(other_path, map_location='cpu')
+
+        if self.transform is not None:
+            anchor = self.transform(anchor.clone())
+            other = self.transform(other.clone())
+
+        # Return idx as an int (not wrapped in extra list dimension)
+        return idx, (anchor, other)
 
 class AudioDatasetTriplets(Dataset):
     def __init__(self, data, masks, tags=None):

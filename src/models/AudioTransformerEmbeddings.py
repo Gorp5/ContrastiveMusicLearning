@@ -5,7 +5,7 @@ from models import RopeALiBiModelComponents
 
 class AudioTransformerEmbeddings(nn.Module):
     def __init__(self, input_dim=64, num_heads=16, encoder_layers=16, decoder_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
-                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False, num_classes=50, genre_count=0, mood_count=0, patching = None):
+                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False, num_classes=50, genre_count=0, mood_count=0, patching = None, custom_slope=-1):
         super(AudioTransformerEmbeddings, self).__init__()
         self.name = f"AudioTransformer-LatentSpace{latent_space}-Heads{num_heads}-EncoderLayers{encoder_layers}-DecoderLayers{decoder_layers}-DModel{length}-Dropout{dropout}-AutoRegressive{autoregressive}{name_extension}"
 
@@ -29,6 +29,7 @@ class AudioTransformerEmbeddings(nn.Module):
                                                                             checkpointing=checkpointing,
                                                                             use_alibi=use_alibi,
                                                                             use_rope=use_rope,
+                                                                            custom_slopes=custom_slope,
                                                                             device='cuda')
 
 

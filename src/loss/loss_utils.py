@@ -10,8 +10,6 @@ def cosine_similarity(pred, target):
     loss = 1 - torch.nn.functional.cosine_similarity(pred, target).mean(dim=-1)
     return loss.mean()
 
-
-
 class DifferentiablePRAUCLoss(nn.Module):
     def __init__(self, tau=0.1):
         super().__init__()

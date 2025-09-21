@@ -127,7 +127,7 @@ class RoPEALiBiTransformerEncoderLayer(nn.Module):
 
 class RoPEALiBiTransformerEncoder(nn.Module):
     def __init__(self, num_layers=8, d_model=256, num_heads=16, dim_feedforward=256, seq_len=256, dropout=0.1,
-                 checkpointing=False, use_rope=False, use_alibi=False, device='cpu'):
+                 checkpointing=False, use_rope=False, use_alibi=False, device='cpu', custom_slopes=-1):
         super().__init__()
 
         self.layers = nn.ModuleList([
@@ -137,9 +137,13 @@ class RoPEALiBiTransformerEncoder(nn.Module):
         ])
 
         self.checkpointing = checkpointing
+        self.custom_slopes = custom_slopes
 
         if use_alibi:
-                self.register_buffer("alibi_slopes", get_hierarchical_slopes(num_heads).to(device, dtype=torch.float32))
+            if custom_slopes > 0:
+                self.alibi_slopes = get_ranged_slopes(num_heads, num_layers, device, max=custom_slopes, dtype=torch.float32)
+            else:
+                self.alibi_slopes = get_alibi_slopes(num_heads).to(device, dtype=torch.float32)
         else:
             self.alibi_slopes = None
 
@@ -153,11 +157,14 @@ class RoPEALiBiTransformerEncoder(nn.Module):
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, src, mask=None):
-        for layer in self.layers:
-            src = layer(src, self.alibi_slopes, self.rope_matrix, mask)
+        alibi_slopes = self.alibi_slopes
+        for index, layer in enumerate(self.layers):
+            if self.custom_slopes > 0.0:
+                alibi_slopes = self.alibi_slopes[index]
+            #src = src.transpose(1, 2)
+            src = layer(src, alibi_slopes, self.rope_matrix, mask)
 
         return self.norm(src)
-
 
 
 class RoPEALiBiTransformerDecoderLayer(nn.Module):
@@ -208,7 +215,7 @@ class RoPEALiBiTransformerDecoderLayer(nn.Module):
 
 
 class RoPEALiBiTransformerDecoder(nn.Module):
-    def __init__(self, num_layers=8, d_model=256, num_heads=16, dim_feedforward=256, seq_len=256, dropout=0.1, checkpointing=False, use_rope=True, use_alibi=True, device='cpu'):
+    def __init__(self, num_layers=8, d_model=256, num_heads=16, dim_feedforward=256, seq_len=256, dropout=0.1, checkpointing=False, use_rope=True, use_alibi=True, device='cpu', custom_slopes=-1):
         super().__init__()
 
         self.layers = nn.ModuleList([
@@ -217,9 +224,13 @@ class RoPEALiBiTransformerDecoder(nn.Module):
         ])
 
         self.checkpointing = checkpointing
+        self.custom_slopes = custom_slopes
 
         if use_alibi:
-                self.alibi_slopes = get_hierarchical_slopes(num_heads).to(device, dtype=torch.float32)
+            if custom_slopes > 0:
+                self.alibi_slopes = get_ranged_slopes(num_heads, num_layers, device, max=custom_slopes, dtype=torch.float32)
+            else:
+                self.alibi_slopes = get_alibi_slopes(num_heads).to(device, dtype=torch.float32)
         else:
             self.alibi_slopes = None
 
@@ -233,8 +244,11 @@ class RoPEALiBiTransformerDecoder(nn.Module):
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, tgt, memory, mask=None):
-        for layer in self.layers:
-            tgt = layer(tgt, memory, self.alibi_slopes, self.rope_matrix,  mask)
+        alibi_slopes = self.alibi_slopes
+        for index, layer in enumerate(self.layers):
+            if self.custom_slopes > 0:
+                alibi_slopes = self.alibi_slopes[index]
+            tgt = layer(tgt, memory, alibi_slopes, self.rope_matrix,  mask)
 
         return self.norm(tgt)
 
@@ -295,16 +309,16 @@ def get_alibi_slopes(nheads):
             get_alibi_slopes(2 * closest_power_of_2)[0::2][: nheads - closest_power_of_2])
         )
 
-def get_hierarchical_slopes(nheads, nlevels=2):
-    base_slopes = get_alibi_slopes(nheads // nlevels)  # [nheads]
+def get_ranged_slopes(nheads, nlevels, device, max=4, dtype=torch.float32):
+    base_slopes = get_alibi_slopes(nheads)  # [nheads]
 
     # Construct hierarchical slopes: each level can be a scaled copy of base slopes
     slopes = []
     for lvl in range(nlevels):
-        scale = 2.0 ** (-lvl)
-        slopes.append(base_slopes * scale)
+        scale = max * (2 ** -lvl)
+        slopes.append((base_slopes * scale).to(device, dtype=dtype))
 
-    return torch.stack(slopes, dim=0)  # [nlevels, nheads]
+    return slopes  # [nlevels, nheads]
 
 def build_bidirectional_symmetrical_alibi_bias(n_heads, sample_len, device):
 

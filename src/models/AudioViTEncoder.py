@@ -8,10 +8,10 @@ from einops.layers.torch import Rearrange
 from models.RopeALiBiModelComponents import get_alibi_slopes
 
 
-class AudioViT(nn.Module):
-    def c__init__(self, patch_size=8, input_dim=128, num_heads=16, encoder_layers=8, decoder_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
-                 latent_space=256, use_alibi=True, use_pooling=False, CLS=False, use_rope=True):
-        super(AudioViT, self).__init__()
+class AudioViTEncoder(nn.Module):
+    def __init__(self, patch_size=8, input_dim=128, num_heads=16, encoder_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
+                 latent_space=256, use_alibi=True, use_pooling=False, CLS=False, use_rope=True, masking_percent=0.0):
+        super(AudioViTEncoder, self).__init__()
 
         patch_dim = patch_size * patch_size
 
@@ -64,89 +64,29 @@ class AudioViT(nn.Module):
             self.encode_to_latent = nn.Linear(d_model * self.total_patches, latent_space)
             self.encode_to_latent_gelu = nn.GELU()
 
-        # Latent Space Normalization
-        self.norm = nn.LayerNorm(latent_space)
-
-        self.encode_from_latent = nn.Linear(latent_space, self.model_dim * self.total_patches)
-        self.encode_from_latent_gelu = nn.GELU()
-
-        self.decoder = RopeALiBiModelComponents.RoPEALiBiTransformerDecoder(num_layers=decoder_layers,
-                                                                            d_model=d_model,
-                                                                            num_heads=num_heads,
-                                                                            dim_feedforward=dim_feedforward,
-                                                                            seq_len=self.total_patches,
-                                                                            dropout=dropout,
-                                                                            checkpointing=checkpointing,
-                                                                            use_alibi=use_alibi,
-                                                                            use_rope=use_rope,
-                                                                            device='cuda')
-
-        self.from_patch_embedding = nn.Sequential(
-            nn.LayerNorm(d_model),
-            nn.Linear(d_model, patch_dim),
-            nn.LayerNorm(patch_dim),
-            Rearrange('b (h w) (p1 p2 c) -> b c (h p1) (w p2)', p1=patch_size, p2=patch_size, h=patches_vertical, w=patches_horizontal),
-        )
+        self.final_out = nn.Linear(latent_space, latent_space)
 
     def forward(self, x, mask=None):
 
-        latent = self.to_latent(x, mask)
-        memory = self.from_latent(latent, mask)
-
-        return memory, latent
-
-    def to_latent(self, x, mask):
         x = x.unsqueeze(1)
         # Project to Model Dimension
         memory = self.to_patch_embedding(x)
 
         # Encoder Block
-        memory = self.encoder(memory, mask)  # Pass through Transformer encoder
-
-
+        memory = self.encoder(memory, mask)
 
         # Project to Latent Space
         if self.use_pooling:
             memory = self.attention_pooling(memory, mask)
         else:
-            # Reshape for decoder input (Concatenation)
+            # Flatten for decoder input
             memory = memory.reshape(memory.size(0), -1)
             memory = self.encode_to_latent(memory)
             memory = self.encode_to_latent_gelu(memory)
 
-
-        memory = self.norm(memory)
+        memory = self.final_out(memory)
 
         return memory
-
-
-    def from_latent(self, latent, mask):
-        B = latent.size(0)
-
-        # Project latent vector into decoder memory (cross-attention keys/values)
-        memory = self.encode_from_latent(latent)
-        memory = self.encode_from_latent_gelu(memory)
-        memory = memory.view(B, self.total_patches, self.model_dim)
-
-        # Project latent vector to total_patches * d_model
-        queries = self.latent_to_q(latent)  # shape: [B, total_patches * d_model]
-        queries = queries.view(B, self.total_patches, self.model_dim)
-
-        queries = queries + self.query_pos.unsqueeze(0)  # if you want explicit positional info
-
-        # Run decoder: queries cross-attend to memory
-        memory = self.decoder(queries, memory, mask)  # assumes decoder(query, memory, mask)
-
-        # Project to Output Dimension
-        memory = self.from_patch_embedding(memory)
-        memory = memory.squeeze(1)
-        return memory
-
-
-
-    def set_checkpointing(self, checkpointing):
-        self.encoder.set_checkpointing(checkpointing)
-        self.decoder.set_checkpointing(checkpointing)
 
 class AttentionPooling(nn.Module):
     def __init__(self, d_model, latent_dim, num_heads=8, dropout=0.1):

@@ -5,12 +5,16 @@ from models import RopeALiBiModelComponents
 
 class AudioTransformer(nn.Module):
     def __init__(self, input_dim=64, num_heads=16, encoder_layers=16, decoder_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
-                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False, genre_count=0, mood_count=0):
+                 latent_space=64, name_extension="", use_alibi=True, use_rope=False, autoregressive=False, genre_count=0, mood_count=0, custom_slopes=False):
         super(AudioTransformer, self).__init__()
         self.name = f"AudioTransformer-LatentSpace{latent_space}-Heads{num_heads}-EncoderLayers{encoder_layers}-DecoderLayers{decoder_layers}-DModel{length}-Dropout{dropout}-AutoRegressive{autoregressive}{name_extension}"
 
         self.model_dim = d_model
-        self.projection = nn.Linear(input_dim, d_model)
+
+        self.projection_squeeze = nn.Linear(input_dim, input_dim // 2)
+        self.projection_squeeze_gelu = nn.GELU()
+
+        self.projection = nn.Linear(input_dim // 2, d_model)
         self.projection_gelu = nn.GELU()
 
         self.query_tokens = nn.Parameter(torch.randn(length, d_model))
@@ -26,6 +30,7 @@ class AudioTransformer(nn.Module):
                                                                             checkpointing=checkpointing,
                                                                             use_alibi=use_alibi,
                                                                             use_rope=use_rope,
+                                                                            custom_slopes=custom_slopes,
                                                                             device='cuda')
 
         self.encode_to_latent = nn.Linear(d_model * length, latent_space)
@@ -46,17 +51,24 @@ class AudioTransformer(nn.Module):
                                                                             checkpointing=checkpointing,
                                                                             use_alibi=use_alibi,
                                                                             use_rope=use_rope,
+                                                                            custom_slopes=custom_slopes,
                                                                             device='cuda')
 
         # Last Linear Layer
-        self.fc_out = nn.Linear(d_model, input_dim)
+        self.fc_squeeze_out = nn.Linear(d_model, input_dim // 2)
+        self.fc_squeeze_gelu = nn.GELU()
+
+        self.fc_out = nn.Linear(input_dim // 2, input_dim)
         self.fc_gelu = nn.GELU()
 
     def forward(self, x, mask=None):
         x = x.permute(0, 2, 1)
 
         # Project to Model Dimension
-        memory = self.projection(x)
+        memory = self.projection_squeeze(x)
+        memory = self.projection_squeeze_gelu(memory)
+
+        memory = self.projection(memory)
         memory = self.projection_gelu(memory)
 
         # Encoder Block
@@ -83,6 +95,9 @@ class AudioTransformer(nn.Module):
         memory = self.decoder(queries, memory, mask)
 
         # Project to Output Dimension
+        memory = self.fc_squeeze_out(memory)
+        memory = self.fc_squeeze_gelu(memory)
+
         memory = self.fc_out(memory)
         memory = self.fc_gelu(memory)
 
