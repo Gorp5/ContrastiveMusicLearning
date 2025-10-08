@@ -4,6 +4,10 @@ import os
 
 from libauc.losses.contrastive import GCLoss_v1
 from torch.utils.data import Dataset
+from collections import defaultdict
+from data.processing import ReadStats
+from mtgjamendodataset.scripts import commons
+
 
 class StreamingSongDataset(Dataset):
     def __init__(self, song_dir: str, label_dir: str, transform=None, indices=None):
@@ -60,12 +64,36 @@ class AudioDataset(Dataset):
 
 
 class StreamViewDataset(Dataset):
-    def __init__(self, song_dir: str, label_dir: str, transform=None):
+    def __init__(self, song_dir: str, label_dir: str, transform=None, pair_album=False):
         self.song_folders = sorted(os.listdir(song_dir))
         self.song_labels = sorted(os.listdir(label_dir))
 
-        #self.num_views = 2
+        subset_file_name = "autotagging_top50tags"
+        subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
 
+        self.find_song = pair_album
+
+        if self.find_song:
+            tracks, tags, extra = commons.read_file(subset_file)
+            #tag_mapping = ReadStats(subset_file_name)
+
+            self.tracks = tracks
+
+            album_to_ids = defaultdict(list)
+            for album, id in [(self.tracks[i]['album_id'], i) for i in
+                              [int(self.song_folders[i]) for i in range(len(self.song_folders))]]:
+
+                if str(id) in self.song_folders:
+                    album_to_ids[album].append(id)
+
+            artist_to_ids = defaultdict(list)
+            for artist, id in [(self.tracks[i]['artist_id'], i) for i in
+                              [int(self.song_folders[i]) for i in range(len(self.song_folders))]]:
+
+                if str(id) in self.song_folders:
+                    artist_to_ids[artist].append(id)
+
+            self.album_to_ids = album_to_ids
         self.song_dir = song_dir
         self.label_dir = label_dir
         self.transform = transform
@@ -74,14 +102,26 @@ class StreamViewDataset(Dataset):
         return len(self.song_folders)
 
     def __getitem__(self, idx):
-        folder = os.path.join(self.song_dir, self.song_folders[idx])
+        song_id = self.song_folders[idx]
+        folder = os.path.join(self.song_dir, song_id)
         files = os.listdir(folder)
-
         rand_index_1 = random.randint(0, len(files) - 1)
-        rand_index_2 = random.randint(0, len(files[:rand_index_1] + files[rand_index_1 + 1:]))
+
+        if self.find_song:
+            # Pick random song from songs in album
+            album_id = self.tracks[int(song_id)]['album_id']
+            ids_in_album = self.album_to_ids[album_id]
+            positive_song_id = random.choice(ids_in_album)
+            other_folder = os.path.join(self.song_dir, str(positive_song_id))
+            other_files = os.listdir(other_folder)
+            rand_index_2 = random.randint(0, len(other_files) - 1)
+        else:
+            other_folder = folder
+            other_files = files
+            rand_index_2 = random.randint(0, len(files[:rand_index_1] + files[rand_index_1 + 1:]))
 
         view_1 = torch.load(os.path.join(self.song_dir, os.path.join(folder, files[rand_index_1])), map_location='cpu')
-        view_2 = torch.load(os.path.join(self.song_dir, os.path.join(folder, files[rand_index_2])), map_location='cpu')
+        view_2 = torch.load(os.path.join(self.song_dir, os.path.join(other_folder, other_files[rand_index_2])), map_location='cpu')
 
         if self.transform:
             view_1 = self.transform(view_1.clone())

@@ -1,5 +1,7 @@
 import os
 import random
+from asyncio import as_completed
+from concurrent.futures import ProcessPoolExecutor
 
 import librosa
 import numpy as np
@@ -129,6 +131,110 @@ def lp_solver(all_tracks, all_tags, songs_per_tag=250):
 
     return selected_songs, tag_breakdown
 
+def process_track(track_id, all_tracks, tracks, data_location, convert,
+                  num_genres, tag_mapping, chunk_size, chunks_per_song,
+                  write_individually, test_prob, output_directory):
+
+    missed_songs = []
+
+    tags = all_tracks[track_id]
+    path_end = tracks[track_id]['path']
+
+    path_stem = "npy" if not convert else "mp3"
+    full_path = data_location + path_end[:-3] + path_stem
+
+    # one-hot encode genre tags
+    labels = [0] * num_genres
+    for t in tags:
+        genre_index = tag_mapping[t]
+        labels[genre_index] = 1
+
+    discography_labels = (tracks[track_id]['artist_id'], tracks[track_id]['album_id'])
+
+    if not convert:
+        data = np.load(full_path)
+    else:
+        if os.path.exists(full_path):
+            audio, sr = librosa.load(full_path, sr=44100, mono=True)
+
+            win_length = int(round(0.025 * sr))  # ~1103 samples
+            hop_length = int(round(0.010 * sr))  # 441 samples
+            n_fft = 2048
+
+            data = librosa.feature.melspectrogram(
+                        y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
+                        n_mels=128, fmin=0, fmax=sr/2, power=2.0
+                    )
+            data = librosa.amplitude_to_db(data, ref=np.max)
+        else:
+            missed_songs.append(full_path)
+            return None
+
+    chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
+
+    if chunks_per_song:
+        num_samples = min(chunks_per_song, len(chunked_data) - 1)
+        chunked_data = random.sample(chunked_data, num_samples)
+
+    # determine train/test split
+    dataset_split = "train_set" if random.random() > test_prob else "test_set"
+
+    outputs = []
+    for index, chunk in enumerate(chunked_data):
+        outputs.append((
+            f"{output_directory}/{dataset_split}/data/{track_id:04d}/{index:04d}.pt",
+            chunk
+        ))
+
+    outputs.append((
+        f"{output_directory}/{dataset_split}/genre_labels/{track_id:04d}.pt",
+        labels
+    ))
+    outputs.append((
+        f"{output_directory}/{dataset_split}/discography_labels/{track_id:04d}.pt",
+        discography_labels
+    ))
+
+    return outputs
+
+
+def parallel_process_tracks(selected_tracks, output_dir, tag_mapping, data_location, tracks, all_tracks, chunk_size, write_individually, convert):
+    # This will collect all (path, data) from all track tasks
+    all_outputs = []
+
+    with ProcessPoolExecutor(max_workers=5) as executor:
+        # Submit every task
+        future_to_track = {
+            executor.submit(
+                process_track,
+                track_id,
+                all_tracks, tracks, data_location, convert,
+                50, tag_mapping, chunk_size, None,
+                write_individually, 0.1, output_dir
+            ): track_id
+            for track_id in selected_tracks
+        }
+
+        # Use the concurrent.futures.as_completed, *not* asyncio.as_completed
+        for future in tqdm(as_completed(future_to_track), total=len(future_to_track)):
+            track_id = future_to_track[future]
+            try:
+                res = future.result()
+            except Exception as e:
+                print(f"[Error] track {track_id} generated exception: {e}")
+                continue
+            if res is None:
+                # possibly skipped track
+                continue
+            # Append all outputs for later saving
+            all_outputs.extend(res)
+
+    # Now save all outputs (in main process)
+    for (path_out, data_obj) in all_outputs:
+        # You may need to ensure directories exist
+        os.makedirs(os.path.dirname(path_out), exist_ok=True)
+        save_file(data_obj, path_out)
+
 
 def ParseBalanced(subset_file_name, data_location, output_directory, convert, target_per_genre=256, chunk_size=256, chunks_per_batch=4096, write_individually=False):
     subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
@@ -146,16 +252,6 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
     chunks_per_song = None
     test_prob = 0.1
     num_genres = 50
-
-    count = 0
-
-    # song_set = []
-    # label_set = []
-    # id_set = []
-    #
-    # validate_song_set = []
-    # validate_label_set = []
-    # validation_id_set = []
 
     missed_songs = []
     all_tracks = {}
@@ -177,6 +273,8 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
 
     print(f"Min Samples per Genre: {min_value}\nMax Samples per Genre: {max_value}\n Standard Deviation: {std}\n Mean: {mean}\nTracks in Total: {len(selected_track)}")
 
+    #parallel_process_tracks(selected_track, output_directory, tag_mapping, data_location, all_tracks, tracks, chunk_size, write_individually, convert)
+
     for track_id in tqdm(selected_track):
         tags = all_tracks[track_id]
         path_end = tracks[track_id]['path']
@@ -189,6 +287,8 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
             genre_index = tag_mapping[t]
             labels[genre_index] = 1
 
+        discography_labels = (tracks[track_id]['artist_id'], tracks[track_id]['album_id'])
+
         if not convert:
             data = np.load(full_path)
         else:
@@ -200,9 +300,9 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
                 n_fft = 2048
 
                 data = librosa.feature.melspectrogram(
-                            y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
-                            n_mels=128, fmin=0, fmax=sr/2, power=2.0
-                        )
+                    y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
+                    n_mels=128, fmin=0, fmax=sr / 2, power=2.0
+                )
                 data = librosa.amplitude_to_db(data, ref=np.max)
                 # s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
             else:
@@ -216,19 +316,20 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
             num_samples = min(chunks_per_song, len(chunked_data) - 1)
             #repeated_labels = repeated_labels[:num_samples]
             chunked_data = random.sample(chunked_data, num_samples)
-        count += 1
 
         if write_individually:
             if random.random() > test_prob:
-                for index in range(len(chunked_data)):
-                    save_file(chunked_data[index].clone(), f"{output_directory}/train_set/data/{count:04d}/{index:04d}.pt")
-                save_file(labels,
-                          f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
+                for index, chunk in enumerate(chunked_data):
+                    save_file(chunk.clone(), f"{output_directory}/train_set/data/{track_id}/{index:04d}.pt")
+
+                save_file(labels,f"{output_directory}/train_set/genre_labels/{track_id}.pt")
+                save_file(discography_labels,f"{output_directory}/train_set/discography_labels/{track_id:04d}.pt")
             else:
-                for index in range(len(chunked_data)):
-                    save_file(chunked_data[index].clone(), f"{output_directory}/test_set/data/{count:04d}/{index:04d}.pt")
-                save_file(labels,
-                          f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
+                for index, chunk in enumerate(chunked_data):
+                    save_file(chunk.clone(), f"{output_directory}/test_set/data/{track_id}/{index:04d}.pt")
+
+                save_file(labels,f"{output_directory}/test_set/genre_labels/{track_id}.pt")
+                save_file(discography_labels,f"{output_directory}/test_set/discography_labels/{track_id:04d}.pt")
 
     #     if random.random() > test_prob:
     #         song_set.extend(chunked_data)

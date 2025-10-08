@@ -170,16 +170,37 @@ def combined_loss(pred, target):
 
     return total_loss
 
-
-
 def variational_loss(pred, target, mean, logvar, device="cpu", beta=1):
     reconstruction = combined_loss(pred, target)
     kld_loss = KLD(mean, logvar)
 
     return reconstruction + kld_loss * beta
 
-def KLD(mean, logvar):
-    return - 0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp())
+def distribution_similarity_loss(mean_1, logvar_1, mean_2, logvar_2):
+    mean_means = torch.mean(mean_1 + mean_2) / 2
+    mean_logvar = torch.mean(logvar_1.exp() + logvar_2.exp()) / 2
+
+    return -0.5 * (logvar_1 - logvar_2) + 0.25 * (torch.square(mean_1 - mean_means) + torch.square(mean_2 - mean_means)) / torch.square(mean_logvar)
+
+def distribution_normalizing_loss(mean, logvar, reduction='mean', free_bits=0.1):
+    kld_per_sample = -0.5 * (1 + logvar - torch.square(mean) - logvar.exp())
+
+    if reduction == 'sum':
+        return kld_per_sample.sum()
+    elif reduction == 'none':
+        return kld_per_sample
+    return kld_per_sample.mean()
+
+def KLD(mean, logvar, reduction='mean', free_bits=0.1):
+    # kld_per_dim = 0.5 * (mean.pow(2) + logvar.exp() - logvar - 1)  # shape [B, D]
+    # kld_per_sample = torch.clamp(kld_per_dim, min=free_bits).sum(dim=1)
+
+    kld_per_sample = -0.5 * (1 + logvar - mean.pow(2) - logvar.exp())
+    if reduction == 'sum':
+        return kld_per_sample.sum()
+    elif reduction == 'none':
+        return kld_per_sample
+    return kld_per_sample.mean()
 
 def kl_divergence_decomposed(mu, logvar):
     """

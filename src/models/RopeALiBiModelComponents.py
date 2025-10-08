@@ -161,7 +161,6 @@ class RoPEALiBiTransformerEncoder(nn.Module):
         for index, layer in enumerate(self.layers):
             if self.custom_slopes > 0.0:
                 alibi_slopes = self.alibi_slopes[index]
-            #src = src.transpose(1, 2)
             src = layer(src, alibi_slopes, self.rope_matrix, mask)
 
         return self.norm(src)
