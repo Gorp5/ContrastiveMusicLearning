@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from models import RopeALiBiModelComponents
-from models.RopeALiBiModelComponents import RoPEALiBiMultiheadAttention
+from models.RopeALiBiModelComponents import CustomMultiheadAttention
 
 
 class AudioConformer(nn.Module):
@@ -107,7 +107,7 @@ class ALiBiConformerEncoderLayer(nn.Module):
     def __init__(self, d_model=256, num_heads=16, dim_feedforward=256, dropout=0.1):
         super().__init__()
 
-        self.self_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, RopeALiBiModelComponents.get_alibi_slopes(num_heads), dropout=dropout)
+        self.self_attn = CustomMultiheadAttention(d_model, num_heads, RopeALiBiModelComponents.get_alibi_slopes(num_heads), dropout=dropout)
 
         in_channels = 1
         expansion_factor = 1
@@ -186,8 +186,8 @@ class ALiBiConformerEncoder(nn.Module):
 class ALiBiConformerDecoderLayer(nn.Module):
     def __init__(self, d_model=256, num_heads=16, dim_feedforward=256, dropout=0.1):
         super().__init__()
-        self.self_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, RopeALiBiModelComponents.get_alibi_slopes(num_heads), dropout=dropout)
-        self.cross_attn = RoPEALiBiMultiheadAttention(d_model, num_heads, RopeALiBiModelComponents.get_alibi_slopes(num_heads), dropout=dropout)
+        self.self_attn = CustomMultiheadAttention(d_model, num_heads, RopeALiBiModelComponents.get_alibi_slopes(num_heads), dropout=dropout)
+        self.cross_attn = CustomMultiheadAttention(d_model, num_heads, RopeALiBiModelComponents.get_alibi_slopes(num_heads), dropout=dropout)
 
         # [B, F, T]
         self.convolution = DepthwiseConvolutionTransposeBlock(d_model=d_model, kernel_size=3, stride=1)

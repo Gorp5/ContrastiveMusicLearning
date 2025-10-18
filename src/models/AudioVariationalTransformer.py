@@ -34,16 +34,16 @@ class AudioVariationalTransformer(nn.Module):
         self.fc_out = nn.Linear(d_model, self.out_channels)
         self.fc_gelu = nn.GELU()
 
-        self.encoder = RopeALiBiModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
-                                                                            d_model=d_model,
-                                                                            num_heads=num_heads,
-                                                                            dim_feedforward=dim_feedforward,
-                                                                            seq_len=length,
-                                                                            dropout=dropout,
-                                                                            checkpointing=checkpointing,
-                                                                            use_alibi=use_alibi,
-                                                                            use_rope=use_rope,
-                                                                            device=device)
+        self.encoder = RopeALiBiModelComponents.CustomTransformerEncoder(num_layers=transformer_layers,
+                                                                         d_model=d_model,
+                                                                         num_heads=num_heads,
+                                                                         dim_feedforward=dim_feedforward,
+                                                                         seq_len=length,
+                                                                         dropout=dropout,
+                                                                         checkpointing=checkpointing,
+                                                                         use_alibi=use_alibi,
+                                                                         use_rope=use_rope,
+                                                                         device=device)
         self.inputConvOuter = nn.Conv1d(
             in_channels=self.in_channels,
             out_channels=self.out_channels,

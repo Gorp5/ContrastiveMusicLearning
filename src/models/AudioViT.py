@@ -42,16 +42,16 @@ class AudioViT(nn.Module):
 
         self.length = length
 
-        self.encoder = RopeALiBiModelComponents.RoPEALiBiTransformerEncoder(num_layers=encoder_layers,
-                                                                            d_model=d_model,
-                                                                            num_heads=num_heads,
-                                                                            dim_feedforward=dim_feedforward,
-                                                                            seq_len=self.total_patches,
-                                                                            dropout=dropout,
-                                                                            checkpointing=checkpointing,
-                                                                            use_alibi=use_alibi,
-                                                                            use_rope=use_rope,
-                                                                            device='cuda')
+        self.encoder = RopeALiBiModelComponents.CustomTransformerEncoder(num_layers=encoder_layers,
+                                                                         d_model=d_model,
+                                                                         num_heads=num_heads,
+                                                                         dim_feedforward=dim_feedforward,
+                                                                         seq_len=self.total_patches,
+                                                                         dropout=dropout,
+                                                                         checkpointing=checkpointing,
+                                                                         use_alibi=use_alibi,
+                                                                         use_rope=use_rope,
+                                                                         device='cuda')
 
         self.use_pooling = use_pooling
         if self.use_pooling:
@@ -155,7 +155,7 @@ class AttentionPooling(nn.Module):
         self.pool_token = nn.Parameter(torch.randn(1, 1, d_model))
 
         # Multihead attention: pool_token queries the sequence
-        self.attn = RopeALiBiModelComponents.RoPEALiBiMultiheadAttention(d_model, num_heads, get_alibi_slopes(num_heads), dropout=dropout)
+        self.attn = RopeALiBiModelComponents.CustomMultiheadAttention(d_model, num_heads, get_alibi_slopes(num_heads), dropout=dropout)
 
         # Project pooled output to latent space
         self.to_latent = nn.Linear(d_model, latent_dim)

@@ -16,17 +16,17 @@ class AudioTransformerClassifier(nn.Module):
 
         self.length = length
 
-        self.encoder = RopeALiBiModelComponents.RoPEALiBiTransformerEncoder(num_layers=encoder_layers,
-                                                                            d_model=d_model,
-                                                                            num_heads=num_heads,
-                                                                            dim_feedforward=dim_feedforward,
-                                                                            seq_len=length,
-                                                                            dropout=dropout,
-                                                                           checkpointing=checkpointing,
-                                                                            use_alibi=use_alibi,
-                                                                            use_rope=use_rope,
-                                                                            custom_slopes=custom_slopes,
-                                                                            device='cuda')
+        self.encoder = RopeALiBiModelComponents.CustomTransformerEncoder(num_layers=encoder_layers,
+                                                                         d_model=d_model,
+                                                                         num_heads=num_heads,
+                                                                         dim_feedforward=dim_feedforward,
+                                                                         seq_len=length,
+                                                                         dropout=dropout,
+                                                                         checkpointing=checkpointing,
+                                                                         use_alibi=use_alibi,
+                                                                         use_rope=use_rope,
+                                                                         custom_slopes=custom_slopes,
+                                                                         device='cuda')
 
         self.classification_head = nn.Linear(d_model * length, num_classes)
 

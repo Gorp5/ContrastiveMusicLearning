@@ -3,6 +3,7 @@ import math
 import torch.nn as nn
 import torch
 
+from einops import rearrange, repeat
 from models import RopeALiBiModelComponents
 from einops.layers.torch import Rearrange
 
@@ -11,7 +12,7 @@ from models.RopeALiBiModelComponents import get_alibi_slopes
 
 class AudioViTEncoder(nn.Module):
     def __init__(self, patch_size=8, input_dim=128, num_heads=16, encoder_layers=8, length=256, d_model=256, dim_feedforward=512, checkpointing=False, dropout=0.1,
-                 latent_space=256, use_alibi=True, use_pooling=False, CLS=False, use_rope=True, masking_percent=0.0, variational=False, custom_slopes=-1):
+                 latent_space=256, use_alibi=True, use_pooling=False, CLS=False, use_rope=True, masking_percent=0.0, variational=False, custom_slopes=-1, knet=False):
         super(AudioViTEncoder, self).__init__()
 
         patch_dim = patch_size * patch_size
@@ -22,7 +23,7 @@ class AudioViTEncoder(nn.Module):
         patches_vertical = input_dim // patch_size
         patches_horizontal = length // patch_size
 
-        self.total_patches = int(patches_vertical * patches_horizontal * (1.0 - masking_percent))
+        self.total_patches = patches_vertical * patches_horizontal + (1 if CLS else 0)
         self.variational = variational
 
         self.to_patch_embedding = nn.Sequential(
@@ -32,8 +33,8 @@ class AudioViTEncoder(nn.Module):
             nn.LayerNorm(d_model),
         )
 
-        self.positional_embedding = RopeALiBiModelComponents.PositionalEncoding(d_model=d_model, max_len=length + 1)
-        #self.positional_embedding = nn.Parameter(torch.randn(patches_vertical * patches_horizontal + 1, d_model))
+        self.positional_embedding = RopeALiBiModelComponents.PositionalEncoding(d_model=d_model, max_len=patches_vertical * patches_horizontal + 1)
+        #self.positional_embedding = nn.Parameter(torch.randn(1, self.total_patches, d_model))
         #self.add_positional_embedding = PositionalEncodings2D(max_length=patches_horizontal, height=patches_vertical, d_model=d_model)
         #self.positional_embedding = SinusoidalPositionalEmbedding2D(dim=d_model, max_h=patches_vertical, max_w=patches_horizontal)
 
@@ -46,30 +47,25 @@ class AudioViTEncoder(nn.Module):
         #self.latent_to_queries = nn.Linear(latent_space, d_model * self.total_patches)
 
         # Learnable positional embeddings for queries
-        self.query_pos = nn.Parameter(torch.randn(self.total_patches, self.model_dim))
-        self.latent_to_q = nn.Linear(self.latent_space, self.model_dim * self.total_patches)
 
         self.length = length
 
-        self.encoder = RopeALiBiModelComponents.RoPEALiBiTransformerEncoder(num_layers=encoder_layers,
-                                                                            d_model=d_model,
-                                                                            num_heads=num_heads,
-                                                                            dim_feedforward=dim_feedforward,
-                                                                            seq_len=self.total_patches,
-                                                                            dropout=dropout,
-                                                                            checkpointing=checkpointing,
-                                                                            use_alibi=use_alibi,
-                                                                            use_rope=use_rope,
-                                                                            custom_slopes=custom_slopes,
-                                                                            device='cuda')
+        self.encoder = RopeALiBiModelComponents.CustomTransformerEncoder(num_layers=encoder_layers,
+                                                                         d_model=d_model,
+                                                                         num_heads=num_heads,
+                                                                         dim_feedforward=dim_feedforward,
+                                                                         dropout=dropout,
+                                                                         checkpointing=checkpointing,
+                                                                         use_alibi=use_alibi,
+                                                                         use_rope=use_rope,
+                                                                         custom_slopes=custom_slopes,
+                                                                         device='cuda')
 
         self.use_pooling = use_pooling
         if self.use_pooling:
             self.attention_pooling = AttentionPooling(d_model=d_model, latent_dim=latent_space, num_heads=8)
         elif self.CLS:
-            self.cls = torch.nn.Parameter(
-                torch.randn(1, 1, d_model)
-            )
+            self.cls_token = torch.nn.Parameter(torch.randn(1, 1, d_model))
 
             self.encode_to_latent = nn.Linear(d_model, latent_space)
             self.encode_to_latent_gelu = nn.GELU()
@@ -77,20 +73,27 @@ class AudioViTEncoder(nn.Module):
             self.encode_to_latent = nn.Linear(d_model * self.total_patches, latent_space)
             self.encode_to_latent_gelu = nn.GELU()
 
-        self.mean_layer = nn.Linear(latent_space, latent_space)
-        self.logvar_layer = nn.Linear(latent_space, latent_space)
+        if variational:
+            self.mean_layer = nn.Linear(latent_space, latent_space)
+            self.logvar_layer = nn.Linear(latent_space, latent_space)
+
+        if knet:
+            self.knet = KNet(latent_dim=128, num_clusters=64)
 
         self.final_out = nn.Linear(latent_space, latent_space)
 
     def forward(self, x, mask=None, masked=False):
         x = x.unsqueeze(1)
         x = self.to_patch_embedding(x)
-        if self.CLS:
-            B, T, F = x.shape
-            x = torch.cat([self.cls.expand(B, 1, F), x], dim=1)
 
+        B, T, F = x.shape
+
+        if self.CLS:
+            cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b=B)
+            x = torch.cat((cls_tokens, x), dim=1)
+
+        #x += self.positional_embedding[:, :(T + 1)]
         x = self.positional_embedding(x)
-        #x = x + self.positional_embedding.expand(B, -1, -1)[:x.size(0), :]
 
         if masked:
             x = self.masking(x)
@@ -101,7 +104,7 @@ class AudioViTEncoder(nn.Module):
             x = self.attention_pooling(x, mask)
         else:
             if self.CLS:
-                x = x[:, 0, :]
+                x = x[:, 0]
             else:
                 x = x.reshape(x.size(0), -1)
 
@@ -156,6 +159,26 @@ class RandMasker(nn.Module):
         return output
 
 
+class KNet(nn.Module):
+    def __init__(self, latent_dim: int, num_clusters: int):
+        super().__init__()
+        self.num_clusters = num_clusters
+        self.latent_dim = latent_dim
+
+        # Learnable cluster centers
+        self.centroids = nn.Parameter(torch.randn(num_clusters, latent_dim))
+
+    def forward(self, z):
+        # Compute distances between each latent and centroid
+        distances = torch.cdist(z, self.centroids, p=2)  # (B, K)
+
+        # Soft assignments
+        q = torch.softmax(-distances, dim=1)
+
+        # Compute K-means loss
+        loss = torch.sum(q * distances ** 2) / z.size(0)
+
+        return q, loss
 class PositionalEncodings2D(nn.Module):
     def __init__(self, max_length=16, height=8, d_model=256):
         super().__init__()
@@ -232,7 +255,7 @@ class AttentionPooling(nn.Module):
         super().__init__()
         self.pool_token = nn.Parameter(torch.randn(1, 1, d_model))
 
-        self.attn = RopeALiBiModelComponents.RoPEALiBiMultiheadAttention(d_model, num_heads, get_alibi_slopes(num_heads), dropout=dropout)
+        self.attn = RopeALiBiModelComponents.CustomMultiheadAttention(d_model, num_heads, get_alibi_slopes(num_heads), dropout=dropout)
 
         self.to_latent = nn.Linear(d_model, latent_dim)
 

@@ -14,13 +14,13 @@ class AudioTransformerSingleLinearEncoderOnly(nn.Module):
         self.query_tokens = nn.Parameter(torch.randn(length, d_model))
 
         self.d_model = d_model
-        self.encoder = ModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
-                                                                   d_model=d_model,
-                                                                   num_heads=num_heads,
-                                                                   dim_feedforward=dim_feedforward,
-                                                                   seq_len=256,
-                                                                   dropout=dropout,
-                                                                   device='cuda')
+        self.encoder = ModelComponents.CustomTransformerEncoder(num_layers=transformer_layers,
+                                                                d_model=d_model,
+                                                                num_heads=num_heads,
+                                                                dim_feedforward=dim_feedforward,
+                                                                seq_len=256,
+                                                                dropout=dropout,
+                                                                device='cuda')
 
         self.encode_to_latent = nn.Linear(d_model * length, latent_space)
         self.encode_to_latent_gelu = nn.GELU()
@@ -30,13 +30,13 @@ class AudioTransformerSingleLinearEncoderOnly(nn.Module):
         self.encode_from_latent = nn.Linear(latent_space, d_model * length)
         self.encode_from_latent_gelu = nn.GELU()
 
-        self.decoder = ModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
-                                                                    d_model=d_model,
-                                                                    num_heads=num_heads,
-                                                                    dim_feedforward=dim_feedforward,
-                                                                    seq_len=256,
-                                                                    dropout=dropout,
-                                                                    device='cuda')
+        self.decoder = ModelComponents.CustomTransformerEncoder(num_layers=transformer_layers,
+                                                                d_model=d_model,
+                                                                num_heads=num_heads,
+                                                                dim_feedforward=dim_feedforward,
+                                                                seq_len=256,
+                                                                dropout=dropout,
+                                                                device='cuda')
 
         # Last Linear Layer
         self.fc_out = nn.Linear(d_model, input_dim)

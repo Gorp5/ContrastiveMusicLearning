@@ -16,15 +16,15 @@ class AudioTransformerCNN(nn.Module):
         # CLS Token
         self.cls_token = nn.Parameter(torch.randn(1, 1, d_model))
 
-        self.encoder = ModelComponents.RoPEALiBiTransformerEncoder(num_layers=transformer_layers,
-                                                                    d_model=d_model,
-                                                                    num_heads=num_heads,
-                                                                    dim_feedforward=dim_feedforward,
-                                                                    seq_len=length,
-                                                                    dropout=dropout,
-                                                                    use_alibi=use_alibi,
-                                                                    use_rope=use_rope,
-                                                                    device='cuda')
+        self.encoder = ModelComponents.CustomTransformerEncoder(num_layers=transformer_layers,
+                                                                d_model=d_model,
+                                                                num_heads=num_heads,
+                                                                dim_feedforward=dim_feedforward,
+                                                                seq_len=length,
+                                                                dropout=dropout,
+                                                                use_alibi=use_alibi,
+                                                                use_rope=use_rope,
+                                                                device='cuda')
 
         output_dim = 4
 

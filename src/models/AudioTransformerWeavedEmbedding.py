@@ -17,25 +17,25 @@ class AudioTransformerWeavedEmbedding(nn.Module):
 
         self.length = length
 
-        self.encoder_featurewise = RopeALiBiModelComponents.RoPEALiBiTransformerEncoder(num_layers=encoder_layers // 4,
-                                                                            d_model=length,
-                                                                            num_heads=num_heads,
-                                                                            dim_feedforward=dim_feedforward,
-                                                                            seq_len=d_model,
-                                                                            dropout=dropout,
-                                                                            use_alibi=False,
-                                                                            use_rope=True,
-                                                                            device='cuda')
+        self.encoder_featurewise = RopeALiBiModelComponents.CustomTransformerEncoder(num_layers=encoder_layers // 4,
+                                                                                     d_model=length,
+                                                                                     num_heads=num_heads,
+                                                                                     dim_feedforward=dim_feedforward,
+                                                                                     seq_len=d_model,
+                                                                                     dropout=dropout,
+                                                                                     use_alibi=False,
+                                                                                     use_rope=True,
+                                                                                     device='cuda')
 
-        self.encoder_timewise = RopeALiBiModelComponents.RoPEALiBiTransformerEncoder(num_layers=encoder_layers,
-                                                                            d_model=d_model,
-                                                                            num_heads=num_heads,
-                                                                            dim_feedforward=dim_feedforward,
-                                                                            seq_len=length,
-                                                                            dropout=dropout,
-                                                                            use_alibi=use_alibi,
-                                                                            use_rope=use_rope,
-                                                                            device='cuda')
+        self.encoder_timewise = RopeALiBiModelComponents.CustomTransformerEncoder(num_layers=encoder_layers,
+                                                                                  d_model=d_model,
+                                                                                  num_heads=num_heads,
+                                                                                  dim_feedforward=dim_feedforward,
+                                                                                  seq_len=length,
+                                                                                  dropout=dropout,
+                                                                                  use_alibi=use_alibi,
+                                                                                  use_rope=use_rope,
+                                                                                  device='cuda')
 
         self.encode_to_latent = nn.Linear(d_model * length, latent_space)
         self.encode_to_latent_gelu = nn.GELU()
