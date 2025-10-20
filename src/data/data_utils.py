@@ -1,41 +1,93 @@
 import random
+
+import librosa
+import numpy as np
 import torch
 import os
+import csv
 
+from librosa.feature import melspectrogram
 from torch.utils.data import Dataset
 from collections import defaultdict
-from data.processing import ReadStats
 from mtgjamendodataset.scripts import commons
 
+def get_melspec_from_wav(full_path):
+    audio, sr = librosa.load(full_path, sr=44100, mono=True)
 
+    win_length = int(round(0.025 * sr))  # ~1103 samples
+    hop_length = int(round(0.010 * sr))  # 441 samples
+    n_fft = 2048
 
-# The amount of data is just small enough to fit in memory :)
-class AudioDataset(Dataset):
-    def __init__(self, data_directory, tags_directory, transform=None):
-        self.song_files = sorted(os.listdir(data_directory))
-        self.label_files = sorted(os.listdir(tags_directory))
+    data = librosa.feature.melspectrogram(
+        y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
+        n_mels=128, fmin=0, fmax=sr / 2, power=2.0
+    )
+
+    return librosa.amplitude_to_db(data, ref=np.max)
+
+class GTZAN(Dataset):
+    def __init__(self, data_directory, transform=None):
+        self.genre_folders = sorted(os.listdir(data_directory))
         self.transform = transform
 
         self.data = []
         self.tags = []
 
-        self.random = random.seed(42)
+        self.spectrograms = []
+        self.tags = []
 
-        for filename in self.song_files:
-            self.data.extend(torch.load(os.path.join(data_directory, filename)))
+        for index in range(1000):
+            tag = index // 100
+            index_in_genre = index % 100
 
-        for filename in self.song_files:
-            self.tags.extend(torch.load(os.path.join(tags_directory, filename)))
+            self.tags.append(tag)
+            folder_path = os.path.join(data_directory, self.genre_folders[tag])
+
+            songs= sorted(os.listdir(folder_path))
+            song_path = os.path.join(folder_path, songs[index_in_genre])
+
+            mel_spec = get_melspec_from_wav(song_path)
+
+            self.spectrograms.append(mel_spec)
 
     def __len__(self):
-        return len(self.data)
+        return 1000
 
     def __getitem__(self, idx):
-        data = self.data[idx]
-        labels = self.tags[idx]
-        if self.transform:
-            data = self.transform(data.clone())
-        return data, labels
+        return self.tags[idx], self.spectrograms[idx]
+
+class MTAT(Dataset):
+    def __init__(self, data_directory, transform=None):
+        self.id_to_tags = {}
+        self.id_to_path = {}
+        self.ids = []
+
+        self.spectrograms = {}
+
+        with open(os.path.join(data_directory, "annotations_final.csv")) as file:
+            csv_reader = csv.reader(file)
+
+            for row in csv_reader:
+                name = row[-1]
+                id = int(row[0])
+
+                self.id_to_tags[id] = [int(x) for x in row[1:-1]]
+                self.id_to_path[id] = os.path.join(data_directory, name)
+
+                self.ids.append(id)
+
+                mel_spec = get_melspec_from_wav(self.id_to_path[id])
+
+                self.spectrograms[id] = mel_spec
+
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.ids)
+
+    def __getitem__(self, idx):
+        id = self.ids[idx]
+        return self.id_to_tags[id], self.spectrograms[id]
 
 
 class StreamViewDataset(Dataset):
@@ -92,65 +144,20 @@ class StreamViewDataset(Dataset):
         if self.views > 1:
             excluded = []
             excluded.append(rand_index_1)
-            num_files = len(files)
-            
+            #num_files = len(files)
+
             choices = files[:rand_index_1] + files[rand_index_1 + 1:]
             rand_index_indicies = random.sample(choices, k=self.views - 1)
             
             for index in rand_index_indicies:
                 view_i = torch.load(os.path.join(self.song_dir, os.path.join(folder, index)), map_location='cpu')
                 views.append(view_i)
-        
-        return idx, views
-
-        #if self.find_song:
-        #    # Pick random song from songs in album
-        #    album_id = self.tracks[int(song_id)]['album_id']
-        #    ids_in_album = self.album_to_ids[album_id]
-        #    positive_song_id = random.choice(ids_in_album)
-        #    other_folder = os.path.join(self.song_dir, str(positive_song_id))
-        #    other_files = os.listdir(other_folder)
-        #    rand_index_3 = random.randint(0, len(other_files) - 1)
-        #    view_3 = torch.load(os.path.join(self.song_dir, os.path.join(other_folder, other_files[rand_index_3])), map_location='cpu')
-
-        #    if self.transform:
-        #        view_3 = self.transform(view_3.clone())
-
-        #    return idx, (view_1, view_3)
-
 
         if self.transform:
-            view_1 = self.transform(view_1.clone())
-            view_2 = self.transform(view_2.clone())
+            for index, view in enumerate(views):
+                views[index] = self.transform(view.clone())
 
-        return album_id, (view_1, view_2)
-
-        # song_id = self.song_folders[idx]
-        # folder = os.path.join(self.song_dir, song_id)
-        # files = os.listdir(folder)
-        # rand_index_1 = random.randint(0, len(files) - 1)
-        #
-        # if self.find_song:
-        #     # Pick random song from songs in album
-        #     album_id = self.tracks[int(song_id)]['album_id']
-        #     ids_in_album = self.album_to_ids[album_id]
-        #     positive_song_id = random.choice(ids_in_album)
-        #     other_folder = os.path.join(self.song_dir, str(positive_song_id))
-        #     other_files = os.listdir(other_folder)
-        #     rand_index_2 = random.randint(0, len(other_files) - 1)
-        # else:
-        #     other_folder = folder
-        #     other_files = files
-        #     rand_index_2 = random.randint(0, len(files[:rand_index_1] + files[rand_index_1 + 1:]))
-        #
-        # view_1 = torch.load(os.path.join(self.song_dir, os.path.join(folder, files[rand_index_1])), map_location='cpu')
-        # view_2 = torch.load(os.path.join(self.song_dir, os.path.join(other_folder, other_files[rand_index_2])), map_location='cpu')
-        #
-        # if self.transform:
-        #     view_1 = self.transform(view_1.clone())
-        #     view_2 = self.transform(view_2.clone())
-        #
-        # return idx, (view_1, view_2)
+        return idx, views
 
 
 class AddGaussianNoise:

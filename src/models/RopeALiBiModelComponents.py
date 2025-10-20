@@ -3,7 +3,6 @@ import torch
 import math
 
 from flash_attn import flash_attn_func
-from flash_attn.attention import BaseAttnBias
 import torch.nn.functional as F
 
 class RotaryEmbedding(nn.Module):

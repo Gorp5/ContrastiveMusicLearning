@@ -64,14 +64,13 @@ def lp_solver_2(all_tracks, all_tags, songs_per_tag=1024):
     total_songs = lpSum(song_vars.values())
     prob += total_deviation - 0.001 * total_songs  # Prefer uniformity, but gently encourage more songs
 
-    # Solve
     solver = PULP_CBC_CMD(
         msg=True,
         timeLimit=300,
         gapRel=0.001,
         options=[
-            "sec=60",  # Alternative to timeLimit
-            "mipgap=0.005",  # CBC's own relative gap setting
+            "sec=60",
+            "mipgap=0.005",
             "maxNodes=1000000",
             "maxSolutions=10000",
             "randomSeed=42"
@@ -83,51 +82,6 @@ def lp_solver_2(all_tracks, all_tags, songs_per_tag=1024):
     # Collect selected songs
     selected_songs = [sid for sid, var in song_vars.items() if var.varValue == 1]
     tag_breakdown = {tag: int(tag_vars[tag].varValue) for tag in all_tags}
-
-    return selected_songs, tag_breakdown
-
-
-def lp_solver(all_tracks, all_tags, songs_per_tag=250):
-    TARGET = songs_per_tag # Max samples per tag
-
-    # Create binary variables for each song
-    song_vars = {sid: LpVariable(f"select_{sid}", cat=LpBinary) for sid in all_tracks}
-
-    # ILP setup
-    prob = LpProblem("BalanceGenres", LpMaximize)
-
-    # Build the tag coverage score per song
-    song_tag_count = {sid: len(all_tracks[sid]) for sid in all_tracks}
-
-    # Objective: maximize tag coverage
-    prob += lpSum(song_tag_count[sid] * song_vars[sid] for sid in all_tracks)
-
-    # Constraint: each genre appears at most TARGET times
-    for tag, song_ids in all_tags.items():
-        prob += lpSum(song_vars[sid] for sid in song_ids) <= TARGET
-
-    # Solve and show results
-    solver = PULP_CBC_CMD(
-        msg=True,
-        timeLimit=60,
-        gapRel=0.0001,
-        options=[
-            "sec=60",  # Alternative to timeLimit
-            "mipgap=0.0001",  # CBC's own relative gap setting
-            "maxNodes=1000000",
-            "maxSolutions=10000",
-            "randomSeed=42"
-        ]
-    )
-
-    prob.solve(solver)
-    selected_songs = [sid for sid, var in song_vars.items() if var.varValue == 1]
-
-    tag_breakdown = {tag: 0 for tag in all_tags.keys()}
-    for song_id in selected_songs:
-        tags = all_tracks[song_id]
-        for tag in tags:
-            tag_breakdown[tag] += 1
 
     return selected_songs, tag_breakdown
 
@@ -170,22 +124,15 @@ def process_track(track_id, all_tracks, tracks, data_location, convert,
             missed_songs.append(full_path)
             return None
 
-    chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
-
-    if chunks_per_song:
-        num_samples = min(chunks_per_song, len(chunked_data) - 1)
-        chunked_data = random.sample(chunked_data, num_samples)
-
     # determine train/test split
     dataset_split = "train_set" if random.random() > test_prob else "test_set"
 
     outputs = []
-    for index, chunk in enumerate(chunked_data):
-        outputs.append((
-            f"{output_directory}/{dataset_split}/data/{track_id:04d}/{index:04d}.pt",
-            chunk
-        ))
+    outputs.append((
+        f"{output_directory}/{dataset_split}/data/{track_id:04d}.pt",
+        data
 
+    ))
     outputs.append((
         f"{output_directory}/{dataset_split}/genre_labels/{track_id:04d}.pt",
         labels
@@ -231,7 +178,6 @@ def parallel_process_tracks(selected_tracks, output_dir, tag_mapping, data_locat
 
     # Now save all outputs (in main process)
     for (path_out, data_obj) in all_outputs:
-        # You may need to ensure directories exist
         os.makedirs(os.path.dirname(path_out), exist_ok=True)
         save_file(data_obj, path_out)
 
@@ -331,225 +277,11 @@ def ParseBalanced(subset_file_name, data_location, output_directory, convert, ta
                 save_file(labels,f"{output_directory}/test_set/genre_labels/{track_id}.pt")
                 save_file(discography_labels,f"{output_directory}/test_set/discography_labels/{track_id:04d}.pt")
 
-    #     if random.random() > test_prob:
-    #         song_set.extend(chunked_data)
-    #         label_set.extend(repeated_labels)
-    #         id_set.append(track_id)
-    #     else:
-    #         validate_song_set.extend(chunked_data)
-    #         validate_label_set.extend(repeated_labels)
-    #         validation_id_set.append(track_id)
-    #
-    #
-    #     if len(song_set) >= chunks_per_batch * 2:
-    #         # Randomly sample between both sets for the chunks from the song we want to use
-    #         combined = list(zip(song_set, label_set))
-    #         random.shuffle(combined)
-    #         song_set, label_set = zip(*combined)
-    #
-    #         remainder_data = chunked_data[chunks_per_batch:]
-    #         remainder_labels = repeated_labels[chunks_per_batch:]
-    #
-    #         save_file(torch.stack(song_set[:chunks_per_batch]), f"{output_directory}/train_set/data/{count:04d}.pt")
-    #         save_file(torch.stack(label_set[:chunks_per_batch]),
-    #                   f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
-    #
-    #         song_set = remainder_data
-    #         label_set = remainder_labels
-    #
-    #     if len(validate_song_set) >= chunks_per_batch * 2:
-    #         combined = list(zip(validate_song_set, validate_label_set))
-    #         random.shuffle(combined)
-    #         validate_song_set, validate_label_set = zip(*combined)
-    #
-    #         remainder_data = chunked_data[chunks_per_batch:]
-    #         remainder_labels = repeated_labels[chunks_per_batch:]
-    #
-    #         save_file(torch.stack(validate_song_set[:chunks_per_batch]),
-    #                   f"{output_directory}/test_set/data/{count:04d}.pt")
-    #         save_file(torch.stack(validate_label_set[:chunks_per_batch]),
-    #                   f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
-    #
-    #         validate_song_set = remainder_data
-    #         validate_label_set = remainder_labels
-    #
-    # save_file(torch.stack(song_set), f"{output_directory}/train_set/data/{count:04d}.pt")
-    # save_file(torch.stack(label_set), f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
-    # save_file(torch.stack(validate_song_set[:chunks_per_batch]), f"{output_directory}/test_set/data/{count:04d}.pt")
-    # save_file(torch.stack(validate_label_set[:chunks_per_batch]),
-    #           f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
-
     save_file(missed_songs, f"{output_directory}missed_songs.pt")
-
-# TODO: Implement K-Fold Cross Validation
-def ParseData(subset_file_name, data_location, output_directory, features=96, chunks_per_batch=128, chunk_size=256, songs_per_label=None, labels_to_include=50, chunks_per_song=None, test_prob=0.1, convert=False):
-    subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
-
-    tracks, tags, extra = commons.read_file(subset_file)
-    genre_count, genre_mapping = ReadStats(subset_file_name)
-
-    subset_genre_mapping = {}
-    if labels_to_include == 50:
-        subset_genre_mapping = genre_mapping
-    else:
-        for genre, index in genre_mapping.items():
-            if index in range(labels_to_include):
-                subset_genre_mapping[genre] = genre_mapping[genre]
-
-
-    num_genres = len(subset_genre_mapping.keys())
-    num_moods = len(tags['mood/theme'].keys())
-    num_instruments = len(tags['instrument'].keys())
-
-    print(f"There are {num_genres} genres in this partition.")
-    print(f"There are {num_moods} moods/themes in this partition.")
-    print(f"There are {num_instruments} instruments in this partition.")
-
-    count = 0
-
-    song_set = []
-    label_set = []
-
-    validate_song_set = []
-    validate_label_set = []
-    missed_songs = []
-
-    # test_song_set = []
-    # test_label_set = []
-
-    genre_running_total = [0] * num_genres
-
-    for track_num in tqdm(tracks.keys()):
-        metadata_dict = tracks[track_num]
-        path_end = metadata_dict['path']
-        genre = metadata_dict['genre']
-
-        path_stem = "npy" if not convert else "mp3"
-        full_path = data_location + path_end[:-3] + path_stem
-
-        # Make a list of genres that song is tagged as
-        labeled_genres = set()
-
-        if labels_to_include != 50:
-            if len([1 for x in genre if x not in subset_genre_mapping]) > 0:
-                continue
-
-        if songs_per_label:
-            if len([1 for x in genre if genre_running_total[subset_genre_mapping[x]] > songs_per_label]) > 0:
-                continue
-
-        continue_flag = False
-        for g in genre:
-            genre_index = subset_genre_mapping[g]
-            if genre_index > labels_to_include:
-                continue_flag = True
-                continue
-
-            genre_running_total[genre_index] = genre_running_total[genre_index] + 1
-            labeled_genres.add(genre_index)
-
-        if continue_flag:
-            continue
-
-        labels = [0] * num_genres
-        for genre_index in labeled_genres:
-            labels[genre_index] = 1
-
-        if not convert:
-            data = np.load(full_path)
-        else:
-            if os.path.exists(full_path):
-                audio, sr = librosa.load(full_path, sr=44100, mono=True)
-                data = librosa.feature.melspectrogram(y=audio, sr=sr)
-                data = librosa.amplitude_to_db(data, ref=np.max)
-                # s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
-            else:
-                missed_songs.append(full_path)
-                continue
-
-        chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
-        repeated_labels = [torch.tensor(labels)] * num_chunks
-
-        if chunks_per_song:
-            chunked_data = chunked_data[:chunks_per_song]
-            repeated_labels = repeated_labels[:chunks_per_song]
-
-        count += 1
-
-        random.shuffle(chunked_data)
-        if random.random() > test_prob:
-            song_set.extend(chunked_data)
-            label_set.extend(repeated_labels)
-        else:
-            validate_song_set.extend(chunked_data)
-            validate_label_set.extend(repeated_labels)
-
-        if len(song_set) >= chunks_per_batch * 2:
-            # Randomly sample between both sets for the chunks from the song we want to use
-            combined = list(zip(song_set, label_set))
-            random.shuffle(combined)
-            song_set, label_set = zip(*combined)
-
-            remainder_data = chunked_data[chunks_per_batch:]
-            remainder_labels = repeated_labels[chunks_per_batch:]
-
-            save_file(torch.stack(song_set[:chunks_per_batch]), f"{output_directory}/train_set/data/{count:04d}.pt")
-            save_file(torch.stack(label_set[:chunks_per_batch]), f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
-
-            song_set = remainder_data
-            label_set = remainder_labels
-
-        if len(validate_song_set) >= chunks_per_batch:
-            combined = list(zip(validate_song_set, validate_label_set))
-            random.shuffle(combined)
-            validate_song_set, validate_label_set = zip(*combined)
-
-            remainder_data = chunked_data[chunks_per_batch:]
-            remainder_labels = repeated_labels[chunks_per_batch:]
-
-            save_file(torch.stack(validate_song_set[:chunks_per_batch]), f"{output_directory}/test_set/data/{count:04d}.pt")
-            save_file(torch.stack(validate_label_set[:chunks_per_batch]), f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
-
-            validate_song_set = remainder_data
-            validate_label_set = remainder_labels
-
-    save_file(torch.stack(song_set), f"{output_directory}/train_set/data/{count:04d}.pt")
-    save_file(torch.stack(label_set), f"{output_directory}/train_set/genre_labels/{count:04d}.pt")
-    save_file(torch.stack(validate_song_set[:chunks_per_batch]), f"{output_directory}/test_set/data/{count:04d}.pt")
-    save_file(torch.stack(validate_label_set[:chunks_per_batch]), f"{output_directory}/test_set/genre_labels/{count:04d}.pt")
-
-    save_file(missed_songs, f"{output_directory}missed_songs.pt")
-    print(f"Couldn't find {len(missed_songs)} songs.")
-
 
 def save_file(object, file_path):
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     torch.save(object, file_path)
-
-
-def show_mel_before(mel):
-    plt.imshow(mel.squeeze(), origin='lower', aspect='auto', cmap='magma')
-    plt.title("Before")
-    #plt.title(f"Genres: {torch.nonzero(label).squeeze().tolist()}")
-    plt.colorbar()
-    plt.show()
-
-
-def show_mel_after(mel):
-    num_plots = len(mel)
-    fig, axes = plt.subplots(1, num_plots, figsize=(5 * num_plots, 4))
-
-    if num_plots == 1:
-        axes = [axes]
-
-    for i, mel in enumerate(mel):
-        ax = axes[i]
-        mel = mel.squeeze()  # remove channel if present
-        im = ax.imshow(mel, origin='lower', aspect='auto', cmap='magma')
-        fig.colorbar(im, ax=ax)
-
-    plt.tight_layout()
-    plt.show()
 
 
 def chunk_data(data, chunk_size=256):
@@ -574,7 +306,7 @@ def show_mel(mel):
 
     for i, mel in enumerate(mel):
         ax = axes[i]
-        mel = mel.squeeze()  # remove channel if present
+        mel = mel.squeeze()
         im = ax.imshow(mel, origin='lower', aspect='auto', cmap='magma')
         fig.colorbar(im, ax=ax)
 
