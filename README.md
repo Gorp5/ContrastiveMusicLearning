@@ -1,2 +1,2 @@
-# MusicAutoencoders
-Developing Transformer Autoencoders to Cluster Music
+# ContrastiveMusicLearning
+Developing Transformer based contrastive learning models to Cluster Music
