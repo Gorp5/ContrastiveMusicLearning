@@ -1,5 +1,7 @@
 import os
 
+from info_nce import InfoNCE
+
 from loss.loss_utils import *
 from datasets import tqdm
 from torch import optim
@@ -12,7 +14,7 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
-    criterion = config.criterion
+    criterion = InfoNCE()
     model.to("cuda", config.dtype)
 
     torch.autograd.set_detect_anomaly(True)

@@ -70,7 +70,7 @@ class GTZAN(Dataset):
             songs= sorted(os.listdir(folder_path))
             song_path = os.path.join(folder_path, songs[index_in_genre])
 
-            mel_spec = torch.from_numpy(get_melspec_from_file(song_path))
+            mel_spec = get_melspec_from_file(song_path)
 
             self.spectrograms.append(mel_spec)
 
@@ -145,14 +145,13 @@ class StreamViewDataset(Dataset):
         id = self.ids[idx]
 
         full_spectrogram = np.load(song_path)
-
-        possible_starts = full_spectrogram.shape[0] - self.chunk_size
+        possible_starts = full_spectrogram.shape[1] - self.chunk_size
 
         views = []
 
         for view_i in range(self.view_count):
             start = random.randint(0, possible_starts)
-            views.append(torch.tensor(full_spectrogram[start:start + self.chunk_size]))
+            views.append(torch.from_numpy(full_spectrogram[:, start:start + self.chunk_size]))
 
         return idx, views
 
