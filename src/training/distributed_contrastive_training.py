@@ -201,27 +201,39 @@ def sinusoidal_model_fn():
     )
 
 
-def build_datasets_fn():
-    train_dataset = StreamViewDataset(f"E:\\SongsDataset\\raw_30s_melspecs", views=2)
-    test_dataset = StreamViewDataset(f"E:\\SongsDataset\\raw_30s_melspecs", views=2)
-    return train_dataset, test_dataset
+def make_build_datasets_fn(dataset_dir, views=2):
+    def build_datasets_fn():
+        train_dataset = StreamViewDataset(dataset_dir, views=views)
+        test_dataset = StreamViewDataset(dataset_dir, views=views)
+        return train_dataset, test_dataset
+    return build_datasets_fn
 
 
 if __name__ == "__main__":
     world_size = torch.cuda.device_count()
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_dir", type=str, required=True)
     parser.add_argument("--save_dir", type=str, required=True)
     parser.add_argument("--batch_size", type=int, required=True)
     parser.add_argument("--model", type=str, choices=["alibi", "sinusoidal"], default="alibi")
     args = parser.parse_args()
 
-    config = Config(save_path=args.save_dir, num_epochs=512, learning_rate=3e-4,
-                    weight_decay=1e-4, num_workers=1, batch_size= args.batch_size,
-                    eval_batch_size=args.batch_size, dtype=torch.float32)
+    config = Config(
+        save_path=args.save_dir,
+        num_epochs=512,
+        learning_rate=3e-4,
+        weight_decay=1e-4,
+        num_workers=1,
+        batch_size= args.batch_size,
+        eval_batch_size=args.batch_size,
+        dtype=torch.float32
+    )
 
     # Determines which model is trained
     model_fn = alibi_model_fn if args.model == "alibi" else sinusoidal_model_fn
+
+    build_datasets_fn = make_build_datasets_fn(args.dataset_dir)
 
     mp.spawn(ddp_train_worker,
              args=(world_size, model_fn, build_datasets_fn, config, 0,  None, None),
