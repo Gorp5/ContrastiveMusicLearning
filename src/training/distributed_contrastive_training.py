@@ -1,3 +1,4 @@
+import argparse
 import os
 import torch
 import torch.distributed as dist
@@ -208,12 +209,19 @@ def build_datasets_fn():
 
 if __name__ == "__main__":
     world_size = torch.cuda.device_count()
-    batch_size = 512
-    config = Config(save_path="", num_epochs=512, learning_rate=3e-4, weight_decay=1e-4, num_workers=1,
-                    batch_size=batch_size, eval_batch_size=batch_size, dtype=torch.float32)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--save_dir", type=str, required=True)
+    parser.add_argument("--batch_size", type=int, required=True)
+    parser.add_argument("--model", type=str, choices=["alibi", "sinusoidal"], default="alibi")
+    args = parser.parse_args()
+
+    config = Config(save_path=args.save_dir, num_epochs=512, learning_rate=3e-4,
+                    weight_decay=1e-4, num_workers=1, batch_size= args.batch_size,
+                    eval_batch_size=args.batch_size, dtype=torch.float32)
 
     # Determines which model is trained
-    model_fn = alibi_model_fn
+    model_fn = alibi_model_fn if args.model == "alibi" else sinusoidal_model_fn
 
     mp.spawn(ddp_train_worker,
              args=(world_size, model_fn, build_datasets_fn, config, 0,  None, None),

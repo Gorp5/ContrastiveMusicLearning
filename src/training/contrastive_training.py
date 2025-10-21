@@ -4,8 +4,7 @@ from loss.loss_utils import *
 from datasets import tqdm
 from torch import optim
 
-def train_contrastive(model, test_dataloader, train_dataloader, config, variational=False,
-                      test_masked=False, album=False, convex=False, start_epoch=0, views=2):
+def train_contrastive(model, test_dataloader, train_dataloader, config, convex=False, start_epoch=0, views=2):
     # Training setup
     file_path = f".\\{config.save_path}\\Config.pt"
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -24,7 +23,6 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, variatio
 
     if convex:
         convex_loss = ConvexCombinationLoss(num_augmentations=views-1)
-
 
     # Training loop
     step = 1
