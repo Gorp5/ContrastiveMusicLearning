@@ -5,7 +5,7 @@ import os
 import torch
 import numpy as np
 
-from data.data_utils import get_melspec_from_wav
+from data.data_utils import get_melspec_from_file
 from data.processing import chunk_data, ReadStats
 from mtgjamendodataset.scripts import commons
 from tqdm import tqdm
@@ -22,7 +22,7 @@ def get_latents(dataloader, model, chunking=True, chunk_size=256):
     model.to("cuda")
 
     with torch.no_grad():
-        for label, data in dataloader:
+        for label, data in tqdm(dataloader):
             if chunking:
                 chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
                 data = torch.stack(chunked_data)
@@ -136,7 +136,7 @@ def load_and_parse_audio(full_path, convert=True, chunking=True, chunk_size=256)
         chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
         return chunked_data
     else:
-        return torch.tensor(data)
+        return torch.from_numpy(data)
 
 
 

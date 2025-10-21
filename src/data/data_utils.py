@@ -6,12 +6,13 @@ import torch
 import os
 import csv
 
+from datasets import tqdm
 from librosa.feature import melspectrogram
 from torch.utils.data import Dataset
 from collections import defaultdict
 from mtgjamendodataset.scripts import commons
 
-def get_melspec_from_wav(full_path):
+def get_melspec_from_file(full_path):
     audio, sr = librosa.load(full_path, sr=44100, mono=True)
 
     win_length = int(round(0.025 * sr))  # ~1103 samples
@@ -55,7 +56,11 @@ class GTZAN(Dataset):
         self.spectrograms = []
         self.tags = []
 
-        for index in range(1000):
+        for index in tqdm(range(1000)):
+
+            if index == 554:
+                continue
+
             tag = index // 100
             index_in_genre = index % 100
 
@@ -65,12 +70,12 @@ class GTZAN(Dataset):
             songs= sorted(os.listdir(folder_path))
             song_path = os.path.join(folder_path, songs[index_in_genre])
 
-            mel_spec = get_melspec_from_wav(song_path)
+            mel_spec = torch.from_numpy(get_melspec_from_file(song_path))
 
             self.spectrograms.append(mel_spec)
 
     def __len__(self):
-        return 1000
+        return 999
 
     def __getitem__(self, idx):
         return self.tags[idx], self.spectrograms[idx]
@@ -95,7 +100,7 @@ class MTAT(Dataset):
 
                 self.ids.append(id)
 
-                mel_spec = get_melspec_from_wav(self.id_to_path[id])
+                mel_spec = get_melspec_from_file(self.id_to_path[id])
 
                 self.spectrograms[id] = mel_spec
 
@@ -110,71 +115,44 @@ class MTAT(Dataset):
 
 
 class StreamViewDataset(Dataset):
-    def __init__(self, song_dir: str, label_dir: str, transform=None, pair_album=False, views=2):
-        self.song_folders = sorted(os.listdir(song_dir))
-        self.song_labels = sorted(os.listdir(label_dir))
+    def __init__(self, data_directory: str, chunk_size=256, views=2):
+        self.song_folders = sorted(os.listdir(data_directory))
 
-        subset_file_name = "autotagging_top50tags"
-        subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
+        outer_folders = sorted(os.listdir(data_directory))
 
-        self.find_song = pair_album
-        self.views = views
+        self.count = 0
+        self.chunk_size = chunk_size
+        self.view_count = views
 
-        if self.find_song:
-            tracks, tags, extra = commons.read_file(subset_file)
-            #tag_mapping = ReadStats(subset_file_name)
+        self.ids = []
+        self.paths = []
 
-            self.tracks = tracks
+        for folder in outer_folders:
+            directory_path = os.path.join(data_directory, folder)
+            for file in sorted(os.listdir(directory_path)):
+                id = file.split(".")[0]
+                full_path = os.path.join(directory_path, file)
 
-            album_to_ids = defaultdict(list)
-            for album, id in [(self.tracks[i]['album_id'], i) for i in
-                              [int(self.song_folders[i]) for i in range(len(self.song_folders))]]:
-
-                if str(id) in self.song_folders:
-                    album_to_ids[album].append(id)
-
-            artist_to_ids = defaultdict(list)
-            for artist, id in [(self.tracks[i]['artist_id'], i) for i in
-                              [int(self.song_folders[i]) for i in range(len(self.song_folders))]]:
-
-                if str(id) in self.song_folders:
-                    artist_to_ids[artist].append(id)
-
-            self.album_to_ids = album_to_ids
-        self.song_dir = song_dir
-        self.label_dir = label_dir
-        self.transform = transform
+                self.ids.append(int(id))
+                self.paths.append(full_path)
+                self.count += 1
 
     def __len__(self):
-        return len(self.song_folders)
-
+        return self.count
 
     def __getitem__(self, idx):
-        song_id = self.song_folders[idx]
-        folder = os.path.join(self.song_dir, song_id)
-        files = os.listdir(folder)
+        song_path = self.paths[idx]
+        id = self.ids[idx]
 
-        rand_index_1 = random.randint(0, len(files) - 1)
-        
+        full_spectrogram = np.load(song_path)
+
+        possible_starts = full_spectrogram.shape[0] - self.chunk_size
+
         views = []
-        view_1 = torch.load(os.path.join(self.song_dir, os.path.join(folder, files[rand_index_1])), map_location='cpu')
-        views.append(view_1)
-        
-        if self.views > 1:
-            excluded = []
-            excluded.append(rand_index_1)
-            #num_files = len(files)
 
-            choices = files[:rand_index_1] + files[rand_index_1 + 1:]
-            rand_index_indicies = random.sample(choices, k=self.views - 1)
-            
-            for index in rand_index_indicies:
-                view_i = torch.load(os.path.join(self.song_dir, os.path.join(folder, index)), map_location='cpu')
-                views.append(view_i)
-
-        if self.transform:
-            for index, view in enumerate(views):
-                views[index] = self.transform(view.clone())
+        for view_i in range(self.view_count):
+            start = random.randint(0, possible_starts)
+            views.append(torch.tensor(full_spectrogram[start:start + self.chunk_size]))
 
         return idx, views
 

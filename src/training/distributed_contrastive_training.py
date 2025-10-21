@@ -8,6 +8,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DistributedSampler
 from tqdm import tqdm
 
+from data.data_utils import StreamViewDataset
+from models.Myna import ViTEncoder
 from training.contrastive_training import evaluate_contrastive
 from utils.Config import Config
 
@@ -47,20 +49,18 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
     model = DDP(model, device_ids=[rank], output_device=rank, find_unused_parameters=False)
 
     # 3) build dataloaders with DistributedSampler
-    # build_dataloaders_fn should return (train_dataset, test_dataset) or the dataloaders themselves
-    # We'll expect it returns two dataset objects or dataloaders; adapt if yours already builds dataloaders.
     train_dataset, test_dataset = build_datasets_fn()
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
     test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False)
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=config.batch_size,               # This is per-process batch size. Common pattern: global_batch = batch_size * world_size
+        batch_size=config.batch_size,
         sampler=train_sampler,
         num_workers=config.num_workers,
         pin_memory=True,
         drop_last=False,
-        collate_fn=None  # use existing collate if you have one
+        collate_fn=None
     )
 
     test_dataloader = torch.utils.data.DataLoader(
@@ -76,15 +76,11 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = InfoNCE()
 
-    # if convex:
-    #     convex_loss = ConvexCombinationLoss(num_augmentations=views-1)
-
-    # create save dir only on main process
     if is_main_process(rank):
         file_path = os.path.join(".", config.save_path, "Config.pt")
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         torch.save(config, file_path)
-        # initialize loss file
+        # Clear loss file
         with open(os.path.join(".", config.save_path, "Loss.txt"), "w") as f:
             pass
 
@@ -96,16 +92,16 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
     # 5) training loop
     for epoch in range(start_epoch, config.num_epochs):
         model.train()
-        train_sampler.set_epoch(epoch)   # important for shuffling per epoch
+        train_sampler.set_epoch(epoch)
         batch_steps = 0
         epoch_contrastive_loss = 0.0
-        # epoch_convex_loss = 0.0
 
         batches = len(train_dataloader)
         pbar = tqdm(train_dataloader, desc=f"Rank {rank} Epoch {epoch}", disable=(not is_main_process(rank)))
 
         for batch in pbar:
-            indicies, inputs = batch   # keep your dataset structure
+            indicies, inputs = batch
+
             # move inputs to device
             for index, view in enumerate(inputs):
                 v = view.to(device).unsqueeze(1)
@@ -113,7 +109,7 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
                 B, _, T, F = v.shape
 
             stacked = torch.cat(inputs, dim=0)
-            z_stacked = model(stacked)             # model is DDP-wrapped; it forwards to module
+            z_stacked = model(stacked)
             z_list = torch.split(z_stacked, B, dim=0)
 
             contrastive_loss = 0.0
@@ -121,12 +117,6 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
                 contrastive_loss = contrastive_loss + criterion(z_list[0], z_list[i])
             contrastive_loss = contrastive_loss / (len(z_list) - 1)
             loss = contrastive_loss
-
-            # if convex:
-            #     zl = torch.stack(z_list[1:], dim=1)
-            #     convex_loss_score = convex_loss(zl, z_list[0])
-            #     epoch_convex_loss += convex_loss_score.item()
-            #     loss = loss + convex_loss_score
 
             optimizer.zero_grad()
             loss.backward()
@@ -144,29 +134,24 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
                 pbar.set_postfix({"train_loss": f"{contrastive_loss.item():.4f}"})
 
         # reduce/average losses across ranks to get global metric
-        # convert to tensor
         local_contrastive_sum = torch.tensor(epoch_contrastive_loss, dtype=torch.float32, device=device)
-        # local_convex_sum = torch.tensor(epoch_convex_loss, dtype=torch.float32, device=device)
         local_batches = torch.tensor(batch_steps, dtype=torch.float32, device=device)
 
         # Sum across all ranks
         dist.all_reduce(local_contrastive_sum, op=dist.ReduceOp.SUM)
-        # dist.all_reduce(local_convex_sum, op=dist.ReduceOp.SUM)
         dist.all_reduce(local_batches, op=dist.ReduceOp.SUM)
 
         avg_train_contrastive_loss = (local_contrastive_sum / local_batches).item() if local_batches.item() > 0 else float("nan")
-        # avg_train_convex_loss = (local_convex_sum / local_batches).item() if local_batches.item() > 0 else float("nan")
 
         # synchronize before evaluation
         dist.barrier()
 
-        # Evaluate. Option A: run evaluate on rank 0 only to avoid duplicate work
+        # run evaluate on rank 0
         if is_main_process(rank):
             same_song_contrastive_loss = evaluate_contrastive(model.module, test_dataloader, config)
         else:
             same_song_contrastive_loss = None
 
-        # Broadcast evaluation scalar from rank 0 to all ranks so logs can be unified if needed
         same_song_tensor = torch.tensor([same_song_contrastive_loss if same_song_contrastive_loss is not None else -1.0],
                                        dtype=torch.float32, device=device)
         dist.broadcast(same_song_tensor, src=0)
@@ -176,8 +161,6 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
         if is_main_process(rank):
             torch.save(model.module, os.path.join(".", config.save_path, f"Epoch-{epoch}.pt"))
             term = f"[Epoch {epoch}] Train: Same Song Contrastive Loss = {avg_train_contrastive_loss:.4f}"
-            # if convex:
-            #     term += f"\t|\tConvex Loss = {avg_train_convex_loss:.4f}"
             term += f"\nTest: Same Song Contrastive Loss = {same_song_contrastive_loss:.4f}\n"
             print(term)
 
@@ -185,12 +168,42 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
     cleanup()
 
 
-def model_fn():
-    pass
+def alibi_model_fn():
+    return ViTEncoder(
+        image_size=(128, 256),
+        channels=1,
+        patch_size=(16, 16),
+        latent_space=128,
+        d_model=384,
+        depth=12,
+        heads=6,
+        mlp_dim=1536,
+        mask_ratio=0.9,
+        use_cls=True,
+        alibi=True
+    )
 
 
-def build_dataloaders_fn():
-    pass
+def sinusoidal_model_fn():
+    return ViTEncoder(
+        image_size=(128, 256),
+        channels=1,
+        patch_size=(16, 16),
+        latent_space=128,
+        d_model=384,
+        depth=12,
+        heads=6,
+        mlp_dim=1536,
+        mask_ratio=0.9,
+        use_cls=True,
+        alibi=False
+    )
+
+
+def build_datasets_fn():
+    train_dataset = StreamViewDataset(f"E:\\SongsDataset\\raw_30s_melspecs", views=2)
+    test_dataset = StreamViewDataset(f"E:\\SongsDataset\\raw_30s_melspecs", views=2)
+    return train_dataset, test_dataset
 
 
 if __name__ == "__main__":
@@ -199,7 +212,10 @@ if __name__ == "__main__":
     config = Config(save_path="", num_epochs=512, learning_rate=3e-4, weight_decay=1e-4, num_workers=1,
                     batch_size=batch_size, eval_batch_size=batch_size, dtype=torch.float32)
 
+    # Determines which model is trained
+    model_fn = alibi_model_fn
+
     mp.spawn(ddp_train_worker,
-             args=(world_size, model_fn, build_dataloaders_fn, config, 0,  None, None),
+             args=(world_size, model_fn, build_datasets_fn, config, 0,  None, None),
              nprocs=world_size,
              join=True)

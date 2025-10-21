@@ -285,7 +285,7 @@ def save_file(object, file_path):
 
 
 def chunk_data(data, chunk_size=256):
-    data = torch.tensor(data)
+    data = torch.from_numpy(data)
 
     F, T = data.shape
     T_trunc = T - (T % chunk_size)

@@ -94,7 +94,7 @@ class Transformer(nn.Module):
         return self.norm(x)
 
 
-class Myna(nn.Module):
+class ViTEncoder(nn.Module):
     def __init__(self, *, image_size, patch_size, latent_space, d_model, depth, heads, mlp_dim, channels=3, dim_head=64,
                  additional_patch_size=None, mask_ratio: float = 0.0, use_cls=False, alibi=False):
         super().__init__()
