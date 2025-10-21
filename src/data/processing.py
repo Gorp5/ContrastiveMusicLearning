@@ -177,13 +177,16 @@ def parallel_process_tracks(selected_tracks, output_dir, tag_mapping, data_locat
 
     # Now save all outputs (in main process)
     for (path_out, data_obj) in all_outputs:
-        os.makedirs(os.path.dirname(path_out), exist_ok=True)
-        save_file(data_obj, path_out)
+        try:
+            save_file(data_obj, path_out)
+        except Exception as e:
+            pass
+
 
 
 def parse_sync(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks):
     num_songs = len(selected_tracks) // 55
-    for index in tqdm(range(1, 55)):
+    for index in tqdm(range(3, 55)):
         all_outputs = []
 
         # Submit every task
