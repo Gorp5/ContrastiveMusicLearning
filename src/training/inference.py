@@ -1,3 +1,4 @@
+import math
 import random
 import librosa
 import pandas as pd
@@ -15,7 +16,7 @@ def process_song(song_path, chunking=True):
     chunks = load_and_parse_audio(song_path, convert=True, chunking=chunking)
     id = song_path
 
-def get_latents(dataloader, model, chunking=True, chunk_size=256):
+def get_latents(dataloader, model, chunking=True, averaging=False, chunk_size=256):
     all_latents = []
     all_labels = []
 
@@ -24,13 +25,12 @@ def get_latents(dataloader, model, chunking=True, chunk_size=256):
     with torch.no_grad():
         for label, data in tqdm(dataloader):
             if chunking:
-                chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
-                data = torch.stack(chunked_data)
+                data, num_chunks = chunk_data(data.squeeze(0), chunk_size=chunk_size)
             else:
                 data = torch.tensor(data)
                 data = data.unsqueeze(0)
 
-            latent = run_batch(model, data, averaging=chunking)
+            latent = run_batch(model, data, averaging=averaging)
             all_latents.append(latent)
             all_labels.append(label)
 
@@ -43,7 +43,8 @@ def run_batch(model, batch, averaging=True):
 
     batch = batch.unsqueeze(1)
     # Needs to be Broken into minibatches
-    num_chunks = B // 16
+    num_chunks = max(1, math.ceil(B // 16))
+
     mini_batches = torch.chunk(batch, num_chunks, dim=0)
     latents = []
     for mini_batch in mini_batches:

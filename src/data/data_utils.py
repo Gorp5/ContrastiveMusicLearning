@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import os
 import csv
+import torch.nn.functional as F
 
 from datasets import tqdm
 from librosa.feature import melspectrogram
@@ -26,25 +27,31 @@ def get_melspec_from_file(full_path):
 
     return librosa.amplitude_to_db(data, ref=np.max)
 
+def one_hot_encode(label, num_classes):
+    return F.one_hot(torch.tensor(label), num_classes=num_classes).float()
+
 class LatentDataset(Dataset):
-    def __init__(self, data_directory):
+    def __init__(self, data_directory, num_classes=10):
         files = sorted(os.listdir(data_directory))
 
         self.latents = []
         self.labels = []
+        self.num_classes = num_classes
 
         for file in files:
             type = file[-8:-3]
 
             if type == "label":
-                self.labels.append(file)
+                label = torch.load(os.path.join(data_directory, file), weights_only=False)
+                self.labels.append(label)
             else:
-                self.latents.append(file)
+                data = torch.load(os.path.join(data_directory, file), weights_only=False)
+                self.latents.append(data)
     def __len__(self):
         return len(self.latents)
 
     def __getitem__(self, idx):
-        return self.labels[idx], self.latents[idx]
+        return one_hot_encode(int(self.labels[idx]), self.num_classes), self.latents[idx]
 
 class GTZAN(Dataset):
     def __init__(self, data_directory):
@@ -117,7 +124,6 @@ class MTAT(Dataset):
 class StreamViewDataset(Dataset):
     def __init__(self, data_directory: str, chunk_size=256, views=2):
         self.song_folders = sorted(os.listdir(data_directory))
-
         outer_folders = sorted(os.listdir(data_directory))
 
         self.count = 0

@@ -15,8 +15,7 @@ from librosa.feature import melspectrogram
 from pulp import LpProblem, LpVariable, lpSum, LpMaximize, LpBinary, LpStatus, value, PULP_CBC_CMD, LpMinimize
 
 
-def ReadStats(subset_file_name):
-    subset_file = f'E:/mtg-jamendo-dataset/stats/{subset_file_name}/all.tsv'
+def ReadStats(subset_file):
     tag_index_dict = {}
 
     first_flag = True
@@ -85,17 +84,17 @@ def lp_solver_2(all_tracks, all_tags, songs_per_tag=1024):
 
     return selected_songs, tag_breakdown
 
-def process_track(track_id, all_tracks, tracks, data_location, convert,
-                  num_genres, tag_mapping, chunk_size, chunks_per_song,
-                  write_individually, test_prob, output_directory):
+def process_track(track_id, all_tracks, tracks, data_location,
+                  num_genres, tag_mapping, test_prob, output_directory):
 
     missed_songs = []
 
     tags = all_tracks[track_id]
     path_end = tracks[track_id]['path']
 
-    path_stem = "npy" if not convert else "mp3"
+    path_stem = "mp3"
     full_path = data_location + path_end[:-3] + path_stem
+
 
     # one-hot encode genre tags
     labels = [0] * num_genres
@@ -105,24 +104,21 @@ def process_track(track_id, all_tracks, tracks, data_location, convert,
 
     discography_labels = (tracks[track_id]['artist_id'], tracks[track_id]['album_id'])
 
-    if not convert:
-        data = np.load(full_path)
+    if os.path.exists(full_path):
+        audio, sr = librosa.load(full_path, sr=44100, mono=True)
+
+        win_length = int(round(0.025 * sr))  # ~1103 samples
+        hop_length = int(round(0.010 * sr))  # 441 samples
+        n_fft = 2048
+
+        data = librosa.feature.melspectrogram(
+                    y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
+                    n_mels=128, fmin=0, fmax=sr/2, power=2.0
+                )
+        data = librosa.amplitude_to_db(data, ref=np.max)
     else:
-        if os.path.exists(full_path):
-            audio, sr = librosa.load(full_path, sr=44100, mono=True)
-
-            win_length = int(round(0.025 * sr))  # ~1103 samples
-            hop_length = int(round(0.010 * sr))  # 441 samples
-            n_fft = 2048
-
-            data = librosa.feature.melspectrogram(
-                        y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
-                        n_mels=128, fmin=0, fmax=sr/2, power=2.0
-                    )
-            data = librosa.amplitude_to_db(data, ref=np.max)
-        else:
-            missed_songs.append(full_path)
-            return None
+        missed_songs.append(full_path)
+        return None
 
     # determine train/test split
     dataset_split = "train_set" if random.random() > test_prob else "test_set"
@@ -145,36 +141,39 @@ def process_track(track_id, all_tracks, tracks, data_location, convert,
     return outputs
 
 
-def parallel_process_tracks(selected_tracks, output_dir, tag_mapping, data_location, tracks, all_tracks, chunk_size, write_individually, convert):
+def parallel_process_tracks(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks, chunk_size):
     # This will collect all (path, data) from all track tasks
     all_outputs = []
 
-    with ProcessPoolExecutor(max_workers=5) as executor:
-        # Submit every task
-        future_to_track = {
-            executor.submit(
-                process_track,
-                track_id,
-                all_tracks, tracks, data_location, convert,
-                50, tag_mapping, chunk_size, None,
-                write_individually, 0.1, output_dir
-            ): track_id
-            for track_id in selected_tracks
-        }
+    with ProcessPoolExecutor(max_workers=4) as executor:
+        num_songs = len(selected_tracks) // 55
+        for index in range(1, 55):
+            # Submit every task
+            future_to_track = {
+                executor.submit(
+                    process_track,
+                    track_id,
+                    all_tracks, tracks, data_location,
+                    50, tag_mapping, 0.1, output_dir
+                ): track_id
+                for track_id in selected_tracks[(index - 1) * num_songs:index * num_songs]
+            }
 
-        # Use the concurrent.futures.as_completed, *not* asyncio.as_completed
-        for future in tqdm(as_completed(future_to_track), total=len(future_to_track)):
-            track_id = future_to_track[future]
-            try:
-                res = future.result()
-            except Exception as e:
-                print(f"[Error] track {track_id} generated exception: {e}")
-                continue
-            if res is None:
-                # possibly skipped track
-                continue
-            # Append all outputs for later saving
-            all_outputs.extend(res)
+            # Use the concurrent.futures.as_completed, *not* asyncio.as_completed
+            for future in tqdm(as_completed(future_to_track), total=len(future_to_track)):
+                track_id = future_to_track[future]
+                try:
+                    res = future.result()
+                except Exception as e:
+                    print(f"[Error] track {track_id} generated exception: {e}")
+                    continue
+
+                if res is None:
+                    # possibly skipped track
+                    continue
+
+                # Append all outputs for later saving
+                all_outputs.extend(res)
 
     # Now save all outputs (in main process)
     for (path_out, data_obj) in all_outputs:
@@ -182,102 +181,48 @@ def parallel_process_tracks(selected_tracks, output_dir, tag_mapping, data_locat
         save_file(data_obj, path_out)
 
 
-def ParseBalanced(subset_file_name, data_location, output_directory, convert, target_per_genre=256, chunk_size=256, chunks_per_batch=4096, write_individually=False):
-    subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
+def parse_sync(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks):
+    num_songs = len(selected_tracks) // 55
+    for index in tqdm(range(1, 55)):
+        all_outputs = []
 
+        # Submit every task
+        for track_id in tqdm(selected_tracks[(index - 1) * num_songs:index * num_songs]):
+
+            res = process_track(
+                track_id,
+                all_tracks, tracks, data_location,
+                50, tag_mapping, 0.1, output_dir
+            )
+
+            if res is None:
+                continue
+
+            all_outputs.extend(res)
+
+        # Now save all outputs (in main process)
+        for (path_out, data_obj) in all_outputs:
+            os.makedirs(os.path.dirname(path_out), exist_ok=True)
+            save_file(data_obj, path_out)
+
+
+def ParseAll(subset_file, read, data_location, output_directory):
     tracks, tags, extra = commons.read_file(subset_file)
-    tag_mapping = ReadStats(subset_file_name)
+    tag_mapping = ReadStats(read)
 
     all_tags = {}
     all_tags.update(tags['genre'])
     all_tags.update(tags['instrument'])
     all_tags.update(tags['mood/theme'])
 
-    #min_tag_count = min([len(t) for t in all_tags.values()])
-
-    chunks_per_song = None
-    test_prob = 0.1
-    num_genres = 50
-
-    missed_songs = []
     all_tracks = {}
 
     for track, data in tracks.items():
         all_tracks[track] = [f.split("---")[1] for f in data['tags']]
 
-    selected_track, tag_breakdown = lp_solver_2(all_tracks, all_tags, songs_per_tag=target_per_genre)
-    random.shuffle(selected_track)
+    print("Processing tracks...")
+    parse_sync([x for x in all_tracks.keys()], output_directory, tag_mapping, data_location, all_tracks, tracks)
 
-    vals = list(tag_breakdown.values())
-    min_value = min(vals)
-    max_value = max(vals)
-    std = np.std(vals)
-    mean = sum(vals) / len(vals)
-
-    plt.plot(vals)
-    plt.show()
-
-    print(f"Min Samples per Genre: {min_value}\nMax Samples per Genre: {max_value}\n Standard Deviation: {std}\n Mean: {mean}\nTracks in Total: {len(selected_track)}")
-
-    #parallel_process_tracks(selected_track, output_directory, tag_mapping, data_location, all_tracks, tracks, chunk_size, write_individually, convert)
-
-    for track_id in tqdm(selected_track):
-        tags = all_tracks[track_id]
-        path_end = tracks[track_id]['path']
-
-        path_stem = "npy" if not convert else "mp3"
-        full_path = data_location + path_end[:-3] + path_stem
-
-        labels = [0] * num_genres
-        for t in tags:
-            genre_index = tag_mapping[t]
-            labels[genre_index] = 1
-
-        discography_labels = (tracks[track_id]['artist_id'], tracks[track_id]['album_id'])
-
-        if not convert:
-            data = np.load(full_path)
-        else:
-            if os.path.exists(full_path):
-                audio, sr = librosa.load(full_path, sr=44100, mono=True)
-
-                win_length = int(round(0.025 * sr))  # ~1103 samples
-                hop_length = int(round(0.010 * sr))  # 441 samples
-                n_fft = 2048
-
-                data = librosa.feature.melspectrogram(
-                    y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
-                    n_mels=128, fmin=0, fmax=sr / 2, power=2.0
-                )
-                data = librosa.amplitude_to_db(data, ref=np.max)
-                # s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
-            else:
-                missed_songs.append(full_path)
-                continue
-
-        chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
-        #repeated_labels = [torch.tensor(labels)] * num_chunks
-
-        if chunks_per_song:
-            num_samples = min(chunks_per_song, len(chunked_data) - 1)
-            #repeated_labels = repeated_labels[:num_samples]
-            chunked_data = random.sample(chunked_data, num_samples)
-
-        if write_individually:
-            if random.random() > test_prob:
-                for index, chunk in enumerate(chunked_data):
-                    save_file(chunk.clone(), f"{output_directory}/train_set/data/{track_id}/{index:04d}.pt")
-
-                save_file(labels,f"{output_directory}/train_set/genre_labels/{track_id}.pt")
-                save_file(discography_labels,f"{output_directory}/train_set/discography_labels/{track_id:04d}.pt")
-            else:
-                for index, chunk in enumerate(chunked_data):
-                    save_file(chunk.clone(), f"{output_directory}/test_set/data/{track_id}/{index:04d}.pt")
-
-                save_file(labels,f"{output_directory}/test_set/genre_labels/{track_id}.pt")
-                save_file(discography_labels,f"{output_directory}/test_set/discography_labels/{track_id:04d}.pt")
-
-    save_file(missed_songs, f"{output_directory}missed_songs.pt")
 
 def save_file(object, file_path):
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -285,7 +230,7 @@ def save_file(object, file_path):
 
 
 def chunk_data(data, chunk_size=256):
-    data = torch.from_numpy(data)
+    #data = torch.tensor(data)
 
     F, T = data.shape
     T_trunc = T - (T % chunk_size)
@@ -296,19 +241,3 @@ def chunk_data(data, chunk_size=256):
     data = data.permute(1, 0, 2)
 
     return data, N
-
-def show_mel(mel):
-    num_plots = len(mel)
-    fig, axes = plt.subplots(1, num_plots, figsize=(5 * num_plots, 4))
-
-    if num_plots == 1:
-        axes = [axes]
-
-    for i, mel in enumerate(mel):
-        ax = axes[i]
-        mel = mel.squeeze()
-        im = ax.imshow(mel, origin='lower', aspect='auto', cmap='magma')
-        fig.colorbar(im, ax=ax)
-
-    plt.tight_layout()
-    plt.show()
