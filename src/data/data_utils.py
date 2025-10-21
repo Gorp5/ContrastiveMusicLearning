@@ -25,10 +25,29 @@ def get_melspec_from_wav(full_path):
 
     return librosa.amplitude_to_db(data, ref=np.max)
 
+class LatentDataset(Dataset):
+    def __init__(self, data_directory):
+        files = sorted(os.listdir(data_directory))
+
+        self.latents = []
+        self.labels = []
+
+        for file in files:
+            type = file[-8:-3]
+
+            if type == "label":
+                self.labels.append(file)
+            else:
+                self.latents.append(file)
+    def __len__(self):
+        return len(self.latents)
+
+    def __getitem__(self, idx):
+        return self.labels[idx], self.latents[idx]
+
 class GTZAN(Dataset):
-    def __init__(self, data_directory, transform=None):
+    def __init__(self, data_directory):
         self.genre_folders = sorted(os.listdir(data_directory))
-        self.transform = transform
 
         self.data = []
         self.tags = []

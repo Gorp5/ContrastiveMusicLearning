@@ -189,7 +189,7 @@ class Myna(nn.Module):
         ys, xs = torch.meshgrid(
             torch.arange(num_h, device=device),
             torch.arange(num_w, device=device),
-            indexing='i j'
+            indexing='ij'
         )
 
         coords = torch.stack([ys, xs], dim=-1).reshape(-1, 2)

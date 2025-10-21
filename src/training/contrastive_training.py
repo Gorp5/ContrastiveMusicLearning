@@ -4,12 +4,6 @@ from loss.loss_utils import *
 from datasets import tqdm
 from torch import optim
 
-def get_mask_schedule(current_step, current_epoch, current_batch, total_steps, total_epochs, total_batches, max=0.9):
-    if current_epoch > 1:
-        return max
-
-    return (current_batch / total_batches) * max
-
 def train_contrastive(model, test_dataloader, train_dataloader, config, variational=False,
                       test_masked=False, album=False, convex=False, start_epoch=0, views=2):
     # Training setup
@@ -82,7 +76,7 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, variatio
                 term += "\n"
                 f.write(term)
 
-        same_song_contrastive_loss = evaluate_contrastive(model, test_dataloader, config, variational=variational, test_masked=test_masked, album=album)
+        same_song_contrastive_loss = evaluate_contrastive(model, test_dataloader, config)
 
         term = f"[Epoch {epoch}] Train: Same Song Contrastive Loss = {epoch_same_song_contrastive_loss / batch_steps:.4f}"
 
@@ -92,9 +86,6 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, variatio
         term += "\n"
         term += f"Test: Same Song Contrastive Loss = {same_song_contrastive_loss:.4f}"
 
-        # if convex:
-        #     term += f"\t|\tConvex Loss = {epoch_convex_loss / batch_steps:.4f}"
-
         term += "\n"
 
         print(term)
@@ -102,7 +93,7 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, variatio
         torch.save(model, f".\\{config.save_path}\\Epoch-{epoch}.pt")
 
 
-def evaluate_contrastive(model, dataloader, config, variational=False, test_masked=False, album=False):
+def evaluate_contrastive(model, dataloader, config):
     song_contrastive_loss_total = 0
 
     criterion = config.criterion

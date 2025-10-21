@@ -1,18 +1,66 @@
-import os
 import random
-
 import librosa
-import torch
-
-import numpy as np
 import pandas as pd
+import os
+import torch
+import numpy as np
 
-from tqdm import tqdm
+from data.data_utils import get_melspec_from_wav
 from data.processing import chunk_data, ReadStats
 from mtgjamendodataset.scripts import commons
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def process_song(song_path, chunking=True):
+    chunks = load_and_parse_audio(song_path, convert=True, chunking=chunking)
+    id = song_path
+
+def get_latents(dataloader, model, chunking=True, chunk_size=256):
+    all_latents = []
+    all_labels = []
+
+    model.to("cuda")
+
+    with torch.no_grad():
+        for label, data in dataloader:
+            if chunking:
+                chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
+                data = torch.stack(chunked_data)
+            else:
+                data = torch.tensor(data)
+                data = data.unsqueeze(0)
+
+            latent = run_batch(model, data, averaging=chunking)
+            all_latents.append(latent)
+            all_labels.append(label)
+
+    return all_latents, all_labels
 
 
-def inference_on_directory(subset_file_name, directory_to_parse, config, model, has_labels=False, num_genres=50, num_songs=None, device="cuda", aggregation='mean'):
+def run_batch(model, batch, averaging=True):
+    batch = batch.to("cuda")
+    B, T, F = batch.shape
+
+    batch = batch.unsqueeze(1)
+    # Needs to be Broken into minibatches
+    num_chunks = B // 16
+    mini_batches = torch.chunk(batch, num_chunks, dim=0)
+    latents = []
+    for mini_batch in mini_batches:
+        latent = model(mini_batch)
+        latents.append(latent)
+
+    latents = torch.cat(latents, dim=0)
+
+    if averaging:
+        averages = latents.mean(dim=0).cpu().numpy()
+    else:
+        averages = latents.cpu().numpy()
+
+    torch.cuda.empty_cache()
+    return averages
+
+def inference_on_directory(subset_file_name, directory_to_parse, config, model, has_labels=False, num_genres=50, num_songs=None, device="cuda", chunking=False):
     subset_file = f'E:/mtg-jamendo-dataset/data/{subset_file_name}.tsv'
 
     tracks, tags, extra = commons.read_file(subset_file)
@@ -53,12 +101,16 @@ def inference_on_directory(subset_file_name, directory_to_parse, config, model, 
             actual_tags = None
 
         directory = os.path.join(directory_to_parse, file_name)
-        processed_audio = load_and_parse_audio(directory)
+        processed_audio = load_and_parse_audio(directory, chunk=chunking)
+
         if processed_audio is None:
             continue
 
         predictions, loss = make_inference(model, processed_audio.to(device), config,  actual_tags)
-        average_predictions = np.mean(predictions, axis=0) if aggregation == 'mean' else np.max(predictions, axis=0)
+        if chunking:
+            average_predictions = np.mean(predictions, axis=0)
+        else:
+            average_predictions = predictions
 
         if actual_tags is None:
             actual_tags = [-1] * num_genres
@@ -68,7 +120,7 @@ def inference_on_directory(subset_file_name, directory_to_parse, config, model, 
     return df
 
 
-def load_and_parse_audio(full_path, convert=True, chunk_size=256):
+def load_and_parse_audio(full_path, convert=True, chunking=True, chunk_size=256):
     if not convert:
         data = np.load(full_path)
     else:
@@ -80,8 +132,13 @@ def load_and_parse_audio(full_path, convert=True, chunk_size=256):
         else:
             return None
 
-    chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
-    return torch.stack(chunked_data)
+    if chunking:
+        chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
+        return chunked_data
+    else:
+        return torch.tensor(data)
+
+
 
 def make_inference(model, input, config, labels=None):
     test_loss_total = 0

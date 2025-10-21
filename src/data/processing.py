@@ -295,7 +295,7 @@ def chunk_data(data, chunk_size=256):
     data = data.reshape(F, N, chunk_size)
     data = data.permute(1, 0, 2)
 
-    return list(data), N
+    return data, N
 
 def show_mel(mel):
     num_plots = len(mel)

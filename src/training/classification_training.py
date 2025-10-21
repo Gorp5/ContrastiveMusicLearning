@@ -1,6 +1,4 @@
 import os
-from pathlib import Path
-
 import numpy as np
 import torch
 
@@ -9,7 +7,10 @@ from datasets import tqdm
 from torch import optim
 
 
-def train_classifier(model, test_dataloader, train_dataloader, config, show_graph=False):
+def train_classifier(model, test_dataloader, train_dataloader, criterion, save_directory):
+    model_save_path = save_directory
+
+
     # Training setup
     file_path = f".\\{config.save_path}\\Config.pt"
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -20,13 +21,8 @@ def train_classifier(model, test_dataloader, train_dataloader, config, show_grap
     torch.save(config, file_path)
 
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
-    #scheduler = CosineAnnealingLR(optimizer, T_max=config.steps_per_cycle, eta_min=config.min_learning_rate )
     criterion = config.criterion
     model.to("cuda", config.dtype)
-
-    total_steps = (len(train_dataloader) * config.num_epochs) * config.step_coefficient
-    warmup_threshold = config.warmup_threshold
-    final_gamma = config.gamma
 
     # Training loop
     step = 1
@@ -55,13 +51,6 @@ def train_classifier(model, test_dataloader, train_dataloader, config, show_grap
 
                 outputs = model(data_minibatch)
                 loss = criterion(outputs, label_minibatch)
-
-                # loss = loss.view(-1)
-                # k = int(0.7 * len(loss))  # keep top 70%
-                # topk = torch.topk(loss, k).values
-                # loss = topk.mean()
-                # loss.backward()
-
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -109,7 +98,7 @@ def train_classifier(model, test_dataloader, train_dataloader, config, show_grap
 
         torch.save(model, f".\\{config.save_path}\\Classifier-Epoch-{epoch + 1}.pt")
 
-def evaluate_classification(model, dataloader, config):
+def evaluate_classification(model, dataloader, criterion):
     test_loss_total = 0
 
     all_preds = []

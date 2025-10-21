@@ -5,6 +5,10 @@ from torch import nn, optim
 from torch.utils.data import DataLoader
 
 
+def compute():
+    lgc = local_coherence(embeddings, genre_labels, k=50)
+    lac = local_coherence(embeddings, artist_labels, k=50)
+
 def local_coherence(embeddings: np.ndarray, labels: np.ndarray, k=50):
     N = embeddings.shape[0]
 
