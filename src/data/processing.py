@@ -201,6 +201,12 @@ def ParseBalanced(subset_file, read, data_location, output_directory, target_per
     plt.plot(vals)
     plt.show()
 
+    with open("tag_balanced_subset.csv", "w") as f:
+        f.write("id|tags\n")
+        for track_id in tqdm(selected_track):
+            tags = ",".join([str(x) for x in all_tracks[track_id]])
+            f.write(f"{track_id}|{tags}\n")
+
     print(
         f"Min Samples per Genre: {min_value}\nMax Samples per Genre: {max_value}\n Standard Deviation: {std}\n Mean: {mean}\nTracks in Total: {len(selected_track)}")
 

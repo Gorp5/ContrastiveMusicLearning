@@ -1,8 +1,10 @@
 '''
 Modified from the myna repository https://github.com/ghost-signal/myna
 '''
-from sympy.strategies.core import switch
 
+import torch.nn.functional as F
+
+from sympy.strategies.core import switch
 from models.PositionalEmbeddings import *
 from torch import nn
 from einops.layers.torch import Rearrange
@@ -123,9 +125,9 @@ class Myna(nn.Module):
             self.pos_embedding = None
 
         only_x = False
-        if positional_encoding != "1D-ALIBI":
+        if positional_encoding == "1D-ALIBI":
             self.y_pos_embedding = nn.Parameter(torch.zeros(image_height // patch_height, d_model))
-            nn.init.trunc_normal_(self.y_pos_embedding, std=0.02)
+            #nn.Parameter(torch.zeros(image_height // patch_height, d_model))
             only_x = True
 
         self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, only_x)
@@ -151,10 +153,12 @@ class Myna(nn.Module):
         else:
             coordinates = self.get_patch_coordinates(H, W).expand(B, -1, -1).to(device)
 
-            if self.encoding == "1D-ALIBI":
-                y_indices = coordinates[..., 1].long()  # (B, P)
-                y_emb = self.y_pos_embedding[y_indices]  # (B, P, F)
-                x = x + y_emb
+            # if self.encoding == "1D-ALIBI":
+            #     y_indices = coordinates[..., 1].long().to(x.device)
+            #     y_emb = self.y_pos_embedding(y_indices)
+            #     y_emb = y_emb.clone().contiguous().to(dtype=x.dtype)
+            #
+            #     x += y_emb
 
         if self.mask_ratio > 0.0:
             unmasked = self.mask_inputs(x, self.mask_ratio, device)
@@ -162,6 +166,11 @@ class Myna(nn.Module):
 
             if self.encoding != "Sinusoidal":
                 coordinates = coordinates.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, 2))
+
+        if self.encoding == "1D-ALIBI":
+            y_indices = coordinates[..., 1].long()
+            y_emb = self.y_pos_embedding[y_indices].clone().contiguous().to(device, dtype=x.dtype)
+            x = x + y_emb
 
         B, P, F = x.shape
 

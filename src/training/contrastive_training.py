@@ -43,9 +43,13 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
                 inputs[index] = v
                 B, _, T, F = v.shape
 
-            stacked = torch.cat(inputs, dim=0)
-            z_stacked = model(stacked)
-            z_list = torch.split(z_stacked, B, dim=0)
+            z_list = []
+            for input in inputs:
+                z_list.append(model(input))
+
+            # stacked = torch.cat(inputs, dim=0)
+            # z_stacked = model(stacked)
+            # z_list = torch.split(z_stacked, B, dim=0)
 
             contrastive_loss = 0
 

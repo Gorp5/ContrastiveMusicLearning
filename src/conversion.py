@@ -6,4 +6,5 @@ if __name__ == '__main__':
     data_directory = "E:/mtg-jamendo/"
     output_directory = f"D:/SongsDataset/melspec-mtg-jamendo"
     subset_data = f'E:/mtg-jamendo-dataset/stats/{subset_name}/all.tsv'
+
     ParseBalanced(subset_file, subset_data, data_directory, output_directory)
