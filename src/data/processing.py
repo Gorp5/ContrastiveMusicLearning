@@ -95,7 +95,6 @@ def process_track(track_id, all_tracks, tracks, data_location,
     path_stem = "mp3"
     full_path = data_location + path_end[:-3] + path_stem
 
-
     # one-hot encode genre tags
     labels = [0] * num_genres
     for t in tags:
@@ -103,6 +102,12 @@ def process_track(track_id, all_tracks, tracks, data_location,
         labels[genre_index] = 1
 
     discography_labels = (tracks[track_id]['artist_id'], tracks[track_id]['album_id'])
+
+    if os.path.exists(f"{output_directory}/train_set/data/{track_id:04d}.pt"):
+        return None
+
+    if os.path.exists(f"{output_directory}/test_set/data/{track_id:04d}.pt"):
+        return None
 
     if os.path.exists(full_path):
         audio, sr = librosa.load(full_path, sr=44100, mono=True)
@@ -140,74 +145,76 @@ def process_track(track_id, all_tracks, tracks, data_location,
 
     return outputs
 
-
-def parallel_process_tracks(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks, chunk_size):
+def parse_parallel(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks, test_prob=0.1):
     # This will collect all (path, data) from all track tasks
-    all_outputs = []
-
     with ProcessPoolExecutor(max_workers=4) as executor:
-        num_songs = len(selected_tracks) // 55
-        for index in range(1, 55):
-            # Submit every task
-            future_to_track = {
-                executor.submit(
-                    process_track,
-                    track_id,
-                    all_tracks, tracks, data_location,
-                    50, tag_mapping, 0.1, output_dir
-                ): track_id
-                for track_id in selected_tracks[(index - 1) * num_songs:index * num_songs]
-            }
+        # Submit every task
+        future_to_track = {
+            executor.submit(
+                process_track,
+                track_id,
+                all_tracks, tracks, data_location,
+                50, tag_mapping, test_prob, output_dir
+            ): track_id
+            for track_id in selected_tracks
+        }
 
-            # Use the concurrent.futures.as_completed, *not* asyncio.as_completed
-            for future in tqdm(as_completed(future_to_track), total=len(future_to_track)):
+        current_files = []
+        with tqdm(total=len(future_to_track)) as pbar:
+            for future in as_completed(future_to_track):
                 track_id = future_to_track[future]
                 try:
                     res = future.result()
+                    for (path_out, data_obj) in res:
+                        try:
+                            save_file(data_obj, path_out)
+                        except Exception as e:
+                            pass
                 except Exception as e:
                     print(f"[Error] track {track_id} generated exception: {e}")
-                    continue
+                finally:
+                    pbar.update(1)
 
-                if res is None:
-                    # possibly skipped track
-                    continue
+def ParseBalanced(subset_file, read, data_location, output_directory, target_per_genre=1024):
+    tracks, tags, extra = commons.read_file(subset_file)
+    tag_mapping = ReadStats(read)
 
-                # Append all outputs for later saving
-                all_outputs.extend(res)
+    all_tags = {}
+    all_tags.update(tags['genre'])
+    all_tags.update(tags['instrument'])
+    all_tags.update(tags['mood/theme'])
 
-    # Now save all outputs (in main process)
-    for (path_out, data_obj) in all_outputs:
-        try:
-            save_file(data_obj, path_out)
-        except Exception as e:
-            pass
+    all_tracks = {}
+
+    for track, data in tracks.items():
+        all_tracks[track] = [f.split("---")[1] for f in data['tags']]
+
+    selected_track, tag_breakdown = lp_solver_2(all_tracks, all_tags, songs_per_tag=target_per_genre)
+    random.shuffle(selected_track)
+
+    vals = list(tag_breakdown.values())
+    min_value = min(vals)
+    max_value = max(vals)
+    std = np.std(vals)
+    mean = sum(vals) / len(vals)
+
+    plt.plot(vals)
+    plt.show()
+
+    print(
+        f"Min Samples per Genre: {min_value}\nMax Samples per Genre: {max_value}\n Standard Deviation: {std}\n Mean: {mean}\nTracks in Total: {len(selected_track)}")
+
+    parse_sync(selected_track, output_directory, tag_mapping, data_location, all_tracks, tracks)
 
 
-
-def parse_sync(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks):
-    num_songs = len(selected_tracks) // 55
-    for index in tqdm(range(3, 55)):
-        all_outputs = []
-
-        # Submit every task
-        for track_id in tqdm(selected_tracks[(index - 1) * num_songs:index * num_songs]):
-
-            res = process_track(
-                track_id,
-                all_tracks, tracks, data_location,
-                50, tag_mapping, 0.1, output_dir
-            )
-
-            if res is None:
-                continue
-
-            all_outputs.extend(res)
-
-        # Now save all outputs (in main process)
-        for (path_out, data_obj) in all_outputs:
-            os.makedirs(os.path.dirname(path_out), exist_ok=True)
-            save_file(data_obj, path_out)
-
+def parse_sync(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks, test_prob=0.1):
+    # Submit every task
+    for track_id in tqdm(selected_tracks):
+        process_track(
+            track_id,
+            all_tracks, tracks, data_location,
+            50, tag_mapping, test_prob, output_dir
+        )
 
 def ParseAll(subset_file, read, data_location, output_directory):
     tracks, tags, extra = commons.read_file(subset_file)

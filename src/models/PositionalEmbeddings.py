@@ -32,33 +32,38 @@ def get_alibi_slopes(n_heads: int):
 
 
 class Alibi2DBias(nn.Module):
-    def __init__(self, num_heads, r_left=1.0, r_right=1.0):
+    def __init__(self, num_heads, only_x=False, r_left=1.0, r_right=1.0):
         super().__init__()
         slopes = -get_alibi_slopes(num_heads).to(device='cuda')
         self.register_buffer("slopes", slopes)
         self.r_left = r_left
         self.r_right = r_right
+        self.only_x = only_x
 
     def forward(self, coords):
         B, N, _ = coords.shape
         x, y = coords[..., 0].float(), coords[..., 1].float()
 
         dx = (x[:, :, None] - x[:, None, :]).abs()
-        dy = (y[:, :, None] - y[:, None, :]).abs()
-        dist = dx + dy
+
+        if hasattr(self, "only_x") and self.only_x:
+            dist = dx
+        else:
+            dy = (y[:, :, None] - y[:, None, :]).abs()
+            dist = dx + dy
 
         # raster order
-        flat = y * x.max().add(1) + x
-        le_mask = (flat[:, None, :] <= flat[:, :, None]).float()
+        #flat = y * x.max().add(1) + x
+        #le_mask = (flat[:, None, :] <= flat[:, :, None]).float()
 
         slopes = self.slopes.to(coords.device)
-        left = slopes.view(1, -1, 1, 1) * self.r_left
-        right = slopes.view(1, -1, 1, 1) * self.r_right
+        #left = slopes.view(1, -1, 1, 1) * self.r_left
+        #right = slopes.view(1, -1, 1, 1) * self.r_right
 
         dist = dist.unsqueeze(1).expand(-1, slopes.numel(), -1, -1)
-        le_mask = le_mask.unsqueeze(1)
+        #le_mask = le_mask.unsqueeze(1)
 
-        bias = dist * (le_mask * left + (1 - le_mask) * right)
+        bias = dist# * (le_mask * left + (1 - le_mask) * right)
 
         return bias
 

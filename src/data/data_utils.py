@@ -47,6 +47,7 @@ class LatentDataset(Dataset):
             else:
                 data = torch.load(os.path.join(data_directory, file), weights_only=False)
                 self.latents.append(data)
+
     def __len__(self):
         return len(self.latents)
 
@@ -123,8 +124,7 @@ class MTAT(Dataset):
 
 class StreamViewDataset(Dataset):
     def __init__(self, data_directory: str, chunk_size=256, views=2):
-        self.song_folders = sorted(os.listdir(data_directory))
-        outer_folders = sorted(os.listdir(data_directory))
+        self.song_folder = os.path.join(data_directory, "data\\")
 
         self.count = 0
         self.chunk_size = chunk_size
@@ -133,15 +133,13 @@ class StreamViewDataset(Dataset):
         self.ids = []
         self.paths = []
 
-        for folder in outer_folders:
-            directory_path = os.path.join(data_directory, folder)
-            for file in sorted(os.listdir(directory_path)):
-                id = file.split(".")[0]
-                full_path = os.path.join(directory_path, file)
+        for file in sorted(os.listdir(self.song_folder)):
+            id = file.split(".")[0]
+            full_path = os.path.join(self.song_folder, file)
 
-                self.ids.append(int(id))
-                self.paths.append(full_path)
-                self.count += 1
+            self.ids.append(int(id))
+            self.paths.append(full_path)
+            self.count += 1
 
     def __len__(self):
         return self.count
@@ -150,7 +148,7 @@ class StreamViewDataset(Dataset):
         song_path = self.paths[idx]
         id = self.ids[idx]
 
-        full_spectrogram = np.load(song_path)
+        full_spectrogram = torch.load(song_path, weights_only=False)
         possible_starts = full_spectrogram.shape[1] - self.chunk_size
 
         views = []

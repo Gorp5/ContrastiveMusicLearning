@@ -4,11 +4,6 @@ from sklearn.neighbors import NearestNeighbors
 from torch import nn, optim
 from torch.utils.data import DataLoader
 
-
-def compute():
-    lgc = local_coherence(embeddings, genre_labels, k=50)
-    lac = local_coherence(embeddings, artist_labels, k=50)
-
 def local_coherence(embeddings: np.ndarray, labels: np.ndarray, k=50):
     N = embeddings.shape[0]
 
@@ -25,55 +20,3 @@ def local_coherence(embeddings: np.ndarray, labels: np.ndarray, k=50):
 
     # Average over all samples
     return fractions.mean()
-
-class MLP(nn.Module):
-    def __init__(self, input=128, output=10, dropout=0.0):
-        super().__init__()
-        model = nn.Sequential(
-            nn.Linear(input, 512),
-            nn.ReLU(),
-            nn.Dropout(p=dropout),
-            nn.Linear(512, output)
-        )
-
-    def forward(self, x):
-        return self.model(x)
-
-class LinearProbe(nn.Module):
-    def __init__(self, input=128, output=10):
-        super().__init__()
-        self.model = nn.Linear(input, output)
-
-    def forward(self, x):
-        return self.model(x)
-
-def train_epoch_embeddings(model: nn.Module, train_loader: DataLoader, criterion: nn.Module, optimizer: optim.Optimizer, args: argparse.Namespace):
-    model.train()
-    running_loss = 0.0
-    all_targets = []
-    all_predictions = []
-
-    for indices, inputs, labels in train_loader:
-        inputs = inputs.to(args.device, dtype=torch.float)
-        labels = labels.to(args.device)
-
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item()
-
-        all_targets.append(labels.tolist())
-        all_predictions.append(outputs.tolist())
-
-
-    all_targets, all_predictions = cat_predictions_targets(all_targets, all_predictions)
-
-    # Compute metrics
-    train_metrics = compute_metrics(all_targets, all_predictions, args)
-    primary_metric = select_primary_metric(train_metrics, args)
-
-    return train_metrics, primary_metric

@@ -1,4 +1,4 @@
-from data.processing import ParseAll
+from data.processing import ParseBalanced
 
 if __name__ == '__main__':
     subset_name = "autotagging_top50tags"
@@ -6,4 +6,4 @@ if __name__ == '__main__':
     data_directory = "E:/mtg-jamendo/"
     output_directory = f"D:/SongsDataset/melspec-mtg-jamendo"
     subset_data = f'E:/mtg-jamendo-dataset/stats/{subset_name}/all.tsv'
-    ParseAll(subset_file, subset_data, data_directory, output_directory)
+    ParseBalanced(subset_file, subset_data, data_directory, output_directory)

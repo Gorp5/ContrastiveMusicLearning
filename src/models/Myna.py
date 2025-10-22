@@ -1,6 +1,7 @@
 '''
 Modified from the myna repository https://github.com/ghost-signal/myna
 '''
+from sympy.strategies.core import switch
 
 from models.PositionalEmbeddings import *
 from torch import nn
@@ -57,9 +58,11 @@ class Attention(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, only_x=False):
         super().__init__()
-        self.alibi_2d = Alibi2DBias(heads)
+
+        self.alibi_2d = Alibi2DBias(heads, only_x)
+
         self.norm = nn.LayerNorm(dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -96,7 +99,7 @@ class Transformer(nn.Module):
 
 class Myna(nn.Module):
     def __init__(self, *, image_size, patch_size, latent_space, d_model, depth, heads, mlp_dim, channels=3, dim_head=64,
-                 additional_patch_size=None, mask_ratio: float = 0.0, use_cls=False, alibi=False):
+                 mask_ratio: float = 0.0, use_cls=False, positional_encoding="sinusoidal"):
         super().__init__()
 
         image_height, image_width = pair(image_size)
@@ -107,16 +110,7 @@ class Myna(nn.Module):
         self.patch_height = patch_height
         self.patch_width = patch_width
 
-        self.alibi = alibi
-
-        self.additional_patch_size = additional_patch_size
-        if additional_patch_size:
-            patch_height_b, patch_width_b = pair(additional_patch_size)
-            patch_dim_b = channels * patch_height_b * patch_width_b
-
-            self.to_patch_embedding_b, self.pos_embedding_b = self._make_embeddings(
-                patch_height_b, patch_width_b, patch_dim_b, d_model, image_height, image_width
-            )
+        self.encoding = positional_encoding
 
         patch_dim = channels * patch_height * patch_width
 
@@ -124,7 +118,17 @@ class Myna(nn.Module):
             patch_height, patch_width, patch_dim, d_model, image_height, image_width
         )
 
-        self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim)
+        # Not using match statement because of parity :(
+        if positional_encoding != "sinusoidal":
+            self.pos_embedding = None
+
+        only_x = False
+        if positional_encoding != "1D-ALIBI":
+            self.y_pos_embedding = nn.Parameter(torch.zeros(image_height // patch_height, d_model))
+            nn.init.trunc_normal_(self.y_pos_embedding, std=0.02)
+            only_x = True
+
+        self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, only_x)
 
         self.to_latent = nn.Identity()
 
@@ -141,16 +145,22 @@ class Myna(nn.Module):
 
         x = self.to_patch_embedding(img)
 
-        if self.alibi:
-            coordinates = self.get_patch_coordinates(H, W).expand(B, -1, -1).to(device)
-        else:
+        # Note that the default is 2D Alibi
+        if self.encoding == "Sinusoidal":
             x += self.pos_embedding.to(device, dtype=x.dtype)
+        else:
+            coordinates = self.get_patch_coordinates(H, W).expand(B, -1, -1).to(device)
+
+            if self.encoding == "1D-ALIBI":
+                y_indices = coordinates[..., 1].long()  # (B, P)
+                y_emb = self.y_pos_embedding[y_indices]  # (B, P, F)
+                x = x + y_emb
 
         if self.mask_ratio > 0.0:
             unmasked = self.mask_inputs(x, self.mask_ratio, device)
             x = x.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, x.size(-1)))
 
-            if self.alibi:
+            if self.encoding != "Sinusoidal":
                 coordinates = coordinates.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, 2))
 
         B, P, F = x.shape
@@ -159,10 +169,10 @@ class Myna(nn.Module):
             cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b=B)
             x = torch.cat((cls_tokens, x), dim=1)
 
-        if self.alibi:
-            x = self.transformer(x, coords=coordinates, cls=self.cls_token is not None)
-        else:
+        if self.encoding == "Sinusoidal":
             x = self.transformer(x)
+        else:
+            x = self.transformer(x, coords=coordinates, cls=self.cls_token is not None)
 
         if self.cls_token is not None:
             x = x[:, 0]
