@@ -2,7 +2,6 @@ import torch.nn as nn
 import torch
 import math
 
-from flash_attn import flash_attn_func
 import torch.nn.functional as F
 
 class RotaryEmbedding(nn.Module):
