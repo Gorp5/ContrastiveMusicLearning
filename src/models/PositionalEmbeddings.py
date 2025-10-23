@@ -44,7 +44,6 @@ class AttentionClamping(nn.Module):
         self.cap_type = cap_type
         self.eps = eps
 
-        # make cap and softness learnable if requested
         if learnable:
             self.cap_value = nn.Parameter(torch.tensor(float(cap_value)))
             self.softness = nn.Parameter(torch.tensor(float(softness)))
@@ -58,15 +57,12 @@ class AttentionClamping(nn.Module):
         s = self.softness
 
         if self.cap_type == "tanh":
-            # Smooth saturation via tanh
             return cap * torch.tanh(d / (cap / s))
 
         elif self.cap_type == "log":
-            # Logarithmic smooth saturation
             return cap * torch.log1p(d / (cap * s)) / torch.log1p(1 / s)
 
         elif self.cap_type == "rational":
-            # Rational smooth cap: (d * cap) / (d + (cap / s))
             return (d * cap) / (d + (cap / s))
 
         else:
@@ -77,7 +73,6 @@ class AttentionClamping(nn.Module):
         if self.method == "none" or self.method is None:
             return dist
 
-        # Ensure shape [B, N, N]
         if dist.ndim == 4:
             B, H, N, _ = dist.shape
         else:
