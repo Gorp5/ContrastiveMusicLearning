@@ -8,24 +8,26 @@ import csv
 import torch.nn.functional as F
 
 from datasets import tqdm
-from librosa.feature import melspectrogram
+#from librosa.feature import melspectrogram commented out because it is annoying with dependencies
 from torch.utils.data import Dataset
-from collections import defaultdict
-from mtgjamendodataset.scripts import commons
 
 def get_melspec_from_file(full_path):
-    audio, sr = librosa.load(full_path, sr=44100, mono=True)
+    # Same thing here
+    #
+    # audio, sr = librosa.load(full_path, sr=44100, mono=True)
+    #
+    # win_length = int(round(0.025 * sr))  # ~1103 samples
+    # hop_length = int(round(0.010 * sr))  # 441 samples
+    # n_fft = 2048
+    #
+    # data = librosa.feature.melspectrogram(
+    #     y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
+    #     n_mels=128, fmin=0, fmax=sr / 2, power=2.0
+    # )
+    #
+    # return librosa.amplitude_to_db(data, ref=np.max)
 
-    win_length = int(round(0.025 * sr))  # ~1103 samples
-    hop_length = int(round(0.010 * sr))  # 441 samples
-    n_fft = 2048
-
-    data = librosa.feature.melspectrogram(
-        y=audio, sr=sr, n_fft=n_fft, win_length=win_length, hop_length=hop_length,
-        n_mels=128, fmin=0, fmax=sr / 2, power=2.0
-    )
-
-    return librosa.amplitude_to_db(data, ref=np.max)
+    return None
 
 def one_hot_encode(label, num_classes):
     return F.one_hot(torch.tensor(label), num_classes=num_classes).float()

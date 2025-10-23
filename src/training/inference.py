@@ -6,11 +6,9 @@ import os
 import torch
 import numpy as np
 
-from data.data_utils import get_melspec_from_file
 from data.processing import chunk_data, ReadStats
 from mtgjamendodataset.scripts import commons
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def process_song(song_path, chunking=True):
     chunks = load_and_parse_audio(song_path, convert=True, chunking=chunking)
