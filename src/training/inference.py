@@ -16,7 +16,7 @@ def process_song(song_path, chunking=True):
     chunks = load_and_parse_audio(song_path, convert=True, chunking=chunking)
     id = song_path
 
-def get_latents(dataloader, model, chunking=True, averaging=False, chunk_size=256):
+def get_latents(dataloader, model, chunking=True, averaging=False, chunk_size=256, patch_size=16):
     all_latents = []
     all_labels = []
 
@@ -28,7 +28,9 @@ def get_latents(dataloader, model, chunking=True, averaging=False, chunk_size=25
                 data, num_chunks = chunk_data(data.squeeze(0), chunk_size=chunk_size)
             else:
                 data = torch.tensor(data)
-                data = data.unsqueeze(0)
+                length = data.size(2)
+                truncated_length = length - length % patch_size
+                data = data[:, :, :truncated_length]
 
             latent = run_batch(model, data, averaging=averaging)
             all_latents.append(latent)

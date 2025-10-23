@@ -31,14 +31,96 @@ def get_alibi_slopes(n_heads: int):
     return torch.tensor(slopes, dtype=torch.float32)
 
 
+class AttentionClamping(nn.Module):
+    def __init__(self,
+                 method="None",
+                 cap_value=10.0,
+                 softness=1.0,
+                 cap_type="tanh",
+                 learnable=False,
+                 eps=1e-6):
+        super().__init__()
+        self.method = method
+        self.cap_type = cap_type
+        self.eps = eps
+
+        # make cap and softness learnable if requested
+        if learnable:
+            self.cap_value = nn.Parameter(torch.tensor(float(cap_value)))
+            self.softness = nn.Parameter(torch.tensor(float(softness)))
+        else:
+            self.register_buffer("cap_value", torch.tensor(float(cap_value)))
+            self.register_buffer("softness", torch.tensor(float(softness)))
+
+    # ---------- Smooth Clipping ----------
+    def smooth_clip(self, d):
+        cap = self.cap_value
+        s = self.softness
+
+        if self.cap_type == "tanh":
+            # Smooth saturation via tanh
+            return cap * torch.tanh(d / (cap / s))
+
+        elif self.cap_type == "log":
+            # Logarithmic smooth saturation
+            return cap * torch.log1p(d / (cap * s)) / torch.log1p(1 / s)
+
+        elif self.cap_type == "rational":
+            # Rational smooth cap: (d * cap) / (d + (cap / s))
+            return (d * cap) / (d + (cap / s))
+
+        else:
+            raise ValueError(f"Unknown cap_type: {self.cap_type}")
+
+    # ---------- Forward ----------
+    def forward(self, dist, mask=None):
+        if self.method == "none" or self.method is None:
+            return dist
+
+        # Ensure shape [B, N, N]
+        if dist.ndim == 4:
+            B, H, N, _ = dist.shape
+        else:
+            B, N, _ = dist.shape
+            H = 1
+
+        # ---------------- Normalization ----------------
+        if self.method == "normalize":
+            mean_dist = dist[dist > 0].mean(dim=(-2, -1), keepdim=True).clamp(min=self.eps)
+            return dist / mean_dist
+
+        # ---------------- Capping (Hard or Soft) ----------------
+        elif self.method == "cap":
+            return self.smooth_clip(dist)
+
+        # ---------------- Mask-Aware Re-Scaling ----------------
+        elif self.method == "mask_rescale":
+            if mask is None:
+                return dist
+
+            visible = mask[:, None, :] * mask[:, :, None]
+            visible_sum = visible.sum(dim=-1, keepdim=True).clamp(min=1.0)
+
+            mean_visible_dist = (dist * visible).sum(dim=-1, keepdim=True) / visible_sum
+            global_mean = dist.mean(dim=(-2, -1), keepdim=True).clamp(min=self.eps)
+
+            scale = mean_visible_dist / global_mean
+            return dist * scale
+
+        else:
+            raise ValueError(f"Unknown method: {self.method}")
+
+
 class Alibi2DBias(nn.Module):
-    def __init__(self, num_heads, only_x=False, r_left=1.0, r_right=1.0):
+    def __init__(self, num_heads, only_x=False, clamping=None):
         super().__init__()
         slopes = -get_alibi_slopes(num_heads).to(device='cuda')
         self.register_buffer("slopes", slopes)
-        self.r_left = r_left
-        self.r_right = r_right
         self.only_x = only_x
+        self.clamping = clamping is not None
+
+        if self.clamping:
+            self.clamper = clamping
 
     def forward(self, coords):
         B, N, _ = coords.shape
@@ -52,18 +134,12 @@ class Alibi2DBias(nn.Module):
             dy = (y[:, :, None] - y[:, None, :]).abs()
             dist = dx + dy
 
-        # raster order
-        #flat = y * x.max().add(1) + x
-        #le_mask = (flat[:, None, :] <= flat[:, :, None]).float()
+        if self.clamping:
+            dist = self.clamper(dist)
 
         slopes = self.slopes.to(coords.device)
-        #left = slopes.view(1, -1, 1, 1) * self.r_left
-        #right = slopes.view(1, -1, 1, 1) * self.r_right
-
         dist = dist.unsqueeze(1).expand(-1, slopes.numel(), -1, -1)
-        #le_mask = le_mask.unsqueeze(1)
-
-        bias = dist# * (le_mask * left + (1 - le_mask) * right)
+        bias = dist
 
         return bias
 

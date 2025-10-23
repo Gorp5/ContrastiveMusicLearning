@@ -52,7 +52,15 @@ class LatentDataset(Dataset):
         return len(self.latents)
 
     def __getitem__(self, idx):
-        return one_hot_encode(int(self.labels[idx]), self.num_classes), self.latents[idx]
+        latent = self.latents[idx]
+        l = torch.from_numpy(latent)
+
+        if l.shape[0] == 1:
+            l = l.squeeze(0)
+
+        latent = np.array(l)
+
+        return one_hot_encode(int(self.labels[idx]), self.num_classes), latent
 
 class GTZAN(Dataset):
     def __init__(self, data_directory):

@@ -47,10 +47,6 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
             for input in inputs:
                 z_list.append(model(input))
 
-            # stacked = torch.cat(inputs, dim=0)
-            # z_stacked = model(stacked)
-            # z_list = torch.split(z_stacked, B, dim=0)
-
             contrastive_loss = 0
 
             for index in range(1, len(z_list)):
@@ -100,7 +96,7 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
 def evaluate_contrastive(model, dataloader, config):
     song_contrastive_loss_total = 0
 
-    criterion = config.criterion
+    criterion = InfoNCE()
 
     with torch.no_grad():
         for batch in tqdm(dataloader):
@@ -114,10 +110,6 @@ def evaluate_contrastive(model, dataloader, config):
             stacked = torch.cat(inputs, dim=0)
             z_stacked = model(stacked)
             z_list = torch.split(z_stacked, B, dim=0)
-
-            if variational:
-                za, mean_a, logvar_a = za
-                zb, mean_b, logvar_b = zb
             
             contrastive_loss = 0
             for index in range(1, len(z_list)):

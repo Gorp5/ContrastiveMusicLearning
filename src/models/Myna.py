@@ -60,11 +60,9 @@ class Attention(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, only_x=False):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, only_x=False, clamping=None):
         super().__init__()
-
-        self.alibi_2d = Alibi2DBias(heads, only_x)
-
+        self.alibi_2d = Alibi2DBias(heads, only_x, clamping=clamping)
         self.norm = nn.LayerNorm(dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -90,6 +88,7 @@ class Transformer(nn.Module):
         if coords is not None:
             alibi_bias = self.alibi_2d(coords)
             alibi_bias = self.compute_alibi_with_cls(alibi_bias, has_cls=cls)
+
         else:
             alibi_bias = None
 
@@ -101,7 +100,7 @@ class Transformer(nn.Module):
 
 class Myna(nn.Module):
     def __init__(self, *, image_size, patch_size, latent_space, d_model, depth, heads, mlp_dim, channels=3, dim_head=64,
-                 mask_ratio: float = 0.0, use_cls=False, positional_encoding="sinusoidal"):
+                 mask_ratio: float = 0.0, use_cls=False, positional_encoding="sinusoidal", clamping=None):
         super().__init__()
 
         image_height, image_width = pair(image_size)
@@ -113,6 +112,7 @@ class Myna(nn.Module):
         self.patch_width = patch_width
 
         self.encoding = positional_encoding
+        self.num_patches_y = image_height // patch_height
 
         patch_dim = channels * patch_height * patch_width
 
@@ -130,7 +130,7 @@ class Myna(nn.Module):
             #nn.Parameter(torch.zeros(image_height // patch_height, d_model))
             only_x = True
 
-        self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, only_x)
+        self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, only_x, clamping=clamping)
 
         self.to_latent = nn.Identity()
 
@@ -143,34 +143,34 @@ class Myna(nn.Module):
     def forward(self, img):
         device = img.device
 
+
         B, _, H, W = img.shape
 
         x = self.to_patch_embedding(img)
 
         # Note that the default is 2D Alibi
-        if self.encoding == "Sinusoidal":
+        if self.encoding == "sinusoidal":
             x += self.pos_embedding.to(device, dtype=x.dtype)
         else:
             coordinates = self.get_patch_coordinates(H, W).expand(B, -1, -1).to(device)
 
-            # if self.encoding == "1D-ALIBI":
-            #     y_indices = coordinates[..., 1].long().to(x.device)
-            #     y_emb = self.y_pos_embedding(y_indices)
-            #     y_emb = y_emb.clone().contiguous().to(dtype=x.dtype)
-            #
-            #     x += y_emb
+        if self.encoding == "1D-ALIBI":
+            B, N, D = x.shape
+            H = self.num_patches_y
+            W = N // H
+
+            y_emb = self.y_pos_embedding[:H].to(device, dtype=x.dtype)
+            y_emb = y_emb.unsqueeze(1).repeat(1, W, 1)
+            y_emb = y_emb.reshape(1, H * W, D).repeat(B, 1, 1)
+
+            x = x + y_emb
 
         if self.mask_ratio > 0.0:
             unmasked = self.mask_inputs(x, self.mask_ratio, device)
             x = x.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, x.size(-1)))
 
-            if self.encoding != "Sinusoidal":
+            if self.encoding != "sinusoidal":
                 coordinates = coordinates.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, 2))
-
-        if self.encoding == "1D-ALIBI":
-            y_indices = coordinates[..., 1].long()
-            y_emb = self.y_pos_embedding[y_indices].clone().contiguous().to(device, dtype=x.dtype)
-            x = x + y_emb
 
         B, P, F = x.shape
 
@@ -178,7 +178,7 @@ class Myna(nn.Module):
             cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b=B)
             x = torch.cat((cls_tokens, x), dim=1)
 
-        if self.encoding == "Sinusoidal":
+        if self.encoding == "sinusoidal":
             x = self.transformer(x)
         else:
             x = self.transformer(x, coords=coordinates, cls=self.cls_token is not None)
