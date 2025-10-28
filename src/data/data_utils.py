@@ -156,6 +156,62 @@ class MTAT(Dataset):
         mel_spec = np.load(path)
         return self.id_to_tags[id], mel_spec
 
+class GS(Dataset):
+    def __init__(self, data_directory, transform=None):
+        self.id_to_key = {}
+        self.ids = []
+        self.key_to_num = {}
+        self.id_to_spectrograms = {}
+
+        mp3_dir = os.path.join(data_directory, "audio\\")
+        key_dir = os.path.join(data_directory, "annotations\\key\\")
+
+        mel_spec_dir = os.path.join(data_directory, "mel_spec_all\\")
+
+        key_num = 0
+
+        for row in tqdm(os.listdir(mp3_dir)):
+            mp3_path = os.path.join(mp3_dir, row)
+            path_sections = mp3_path.split(".")[0]
+            id = int(path_sections[0])
+
+            path_snub = path_sections[0] + "." + path_sections[1]
+            annotation_path = os.path.join(key_dir, path_snub + ".key")
+
+            key = ""
+            with open(annotation_path, "r") as key_file:
+                key += key_file.readline()
+
+            mel_spec_path = os.path.join(mel_spec_dir, path_snub + ".npy")
+
+            if not os.path.exists(mel_spec_path):
+                mel_spec = get_melspec_from_file(mp3_path)
+                if mel_spec is None:
+                    continue
+
+                np.save(mel_spec_path, mel_spec)
+
+            self.id_to_key[id] = key
+            self.ids.append(id)
+
+            if not self.key_to_num.keys().__contains__(key):
+                self.key_to_num[key] = key_num
+                key_num += 1
+
+            self.id_to_spectrograms[id] = mel_spec_path
+
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.ids)
+
+
+    def __getitem__(self, idx):
+        id = self.ids[idx]
+        path = self.id_to_spectrograms[id]
+        mel_spec = np.load(path)
+        key = self.id_to_key[id]
+        return self.key_to_num[key], mel_spec
 
 class StreamViewDataset(Dataset):
     def __init__(self, data_directory: str, chunk_size=256, views=2, min=-1, max=-1):

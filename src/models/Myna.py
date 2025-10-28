@@ -171,7 +171,7 @@ class Attention(nn.Module):
         B, N, D = x.shape
         tempo_scale = None
         
-        if self.predict_tempo:            
+        if hasattr(self, "predict_tempo") and self.predict_tempo:
             without_cls = x[:, 1:] if coords.shape[1] + 1 == x.shape[1] else x
             tempo_scale = self.tempo_head(without_cls)
             if self.predict_tempo == "MLP":
