@@ -16,6 +16,10 @@ def local_coherence(embeddings: np.ndarray, labels: np.ndarray, k=50):
 
     # Compute fraction of neighbors with the same label
     matches = (labels[neighbors] == labels[:, None]).astype(float)
+    matches = (matches[neighbors] == 1)
+    if len(matches) == 0:
+        return 0
+
     fractions = matches.mean(axis=1)
 
     # Average over all samples

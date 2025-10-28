@@ -36,16 +36,20 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
         batches = len(train_dataloader)
 
         for batch in tqdm(train_dataloader):
-            indicies, inputs = batch
-            
+            indicies, inputs, masks = batch
+
+            for index, mas in enumerate(masks):
+                m = mas.to("cuda", torch.bool)
+                masks[index] = m
+
             for index, view in enumerate(inputs):
                 v = view.to("cuda", config.dtype).unsqueeze(1)
                 inputs[index] = v
                 B, _, T, F = v.shape
 
             z_list = []
-            for input in inputs:
-                z_list.append(model(input))
+            for input, mask in zip(inputs, masks):
+                z_list.append(model(input, mask=mask))
 
             contrastive_loss = 0
 
@@ -100,7 +104,9 @@ def evaluate_contrastive(model, dataloader, config):
 
     with torch.no_grad():
         for batch in tqdm(dataloader):
-            indicies, inputs = batch
+            indicies, inputs, masks = batch
+                
+            masks = masks.to("cuda", config.dtype)
 
             for index, view in enumerate(inputs):
                 v = view.to("cuda", config.dtype).unsqueeze(1)
@@ -108,7 +114,7 @@ def evaluate_contrastive(model, dataloader, config):
                 B, _, T, F = v.shape
 
             stacked = torch.cat(inputs, dim=0)
-            z_stacked = model(stacked)
+            z_stacked = model(stacked, mask=masks)
             z_list = torch.split(z_stacked, B, dim=0)
             
             contrastive_loss = 0

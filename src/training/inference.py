@@ -14,14 +14,41 @@ def process_song(song_path, chunking=True):
     chunks = load_and_parse_audio(song_path, convert=True, chunking=chunking)
     id = song_path
 
-def get_latents(dataloader, model, chunking=True, averaging=False, chunk_size=256, patch_size=16):
-    all_latents = []
-    all_labels = []
 
+def save_pair(latent, label, dataset_name, averaging, chunking, index, name):
+    directory = f"D:\\SongsDataset\\{dataset_name}\\latent_datasets\\{name}\\"
+    directory += "full-set\\"
+
+    os.makedirs(os.path.dirname(directory), exist_ok=True)
+
+    # for label, latent in zip(labels, latents):
+        # if not averaging and chunking:
+        #     for x in range(label.shape[0]):
+        #         label_name = directory + f"{index}_label"
+        #         latent_name = directory + f"{index}_data"
+        #         torch.save(latent, latent_name + ".pt")
+        #         torch.save(label, label_name + ".pt")
+        # else:
+
+    label_name = directory + f"{index}_label"
+    latent_name = directory + f"{index}_data"
+    torch.save(latent, latent_name + ".pt")
+    torch.save(label, label_name + ".pt")
+
+    index += 1
+
+    return index
+
+
+def get_and_save_latents(dataloader, model, dataset_name, name, chunking=True, averaging=False, chunk_size=256, patch_size=16):
     model.to("cuda")
-
+    index = 0
     with torch.no_grad():
         for label, data in tqdm(dataloader):
+
+            directory = f"D:\\SongsDataset\\{dataset_name}\\latent_datasets\\{name}\\"
+            directory += "full-set\\"
+
             if chunking:
                 data, num_chunks = chunk_data(data.squeeze(0), chunk_size=chunk_size)
             else:
@@ -31,10 +58,7 @@ def get_latents(dataloader, model, chunking=True, averaging=False, chunk_size=25
                 data = data[:, :, :truncated_length]
 
             latent = run_batch(model, data, averaging=averaging)
-            all_latents.append(latent)
-            all_labels.append(label)
-
-    return all_latents, all_labels
+            index = save_pair(latent, label, dataset_name, averaging, chunking, index, name)
 
 
 def run_batch(model, batch, averaging=True):
@@ -138,7 +162,6 @@ def load_and_parse_audio(full_path, convert=True, chunking=True, chunk_size=256)
         return chunked_data
     else:
         return torch.from_numpy(data)
-
 
 
 def make_inference(model, input, config, labels=None):

@@ -10,7 +10,7 @@ from torch.utils.data import DistributedSampler
 from tqdm import tqdm
 
 from data.data_utils import StreamViewDataset
-from models.Myna import ViTEncoder
+from models.Myna import Myna
 from training.contrastive_training import evaluate_contrastive
 from utils.Config import Config
 
@@ -170,7 +170,7 @@ def ddp_train_worker(rank, world_size, model_fn, build_datasets_fn, config,
 
 
 def alibi_model_fn():
-    return ViTEncoder(
+    return Myna(
         image_size=(128, 256),
         channels=1,
         patch_size=(16, 16),
@@ -181,12 +181,13 @@ def alibi_model_fn():
         mlp_dim=1536,
         mask_ratio=0.9,
         use_cls=True,
-        alibi=True
+        positional_encoding="2D-ALIBI",
+        clamping=None
     )
 
 
 def sinusoidal_model_fn():
-    return ViTEncoder(
+    return Myna(
         image_size=(128, 256),
         channels=1,
         patch_size=(16, 16),
@@ -197,7 +198,8 @@ def sinusoidal_model_fn():
         mlp_dim=1536,
         mask_ratio=0.9,
         use_cls=True,
-        alibi=False
+        positional_encoding="2D-ALIBI",
+        clamping=None
     )
 
 

@@ -33,7 +33,7 @@ def get_alibi_slopes(n_heads: int):
 class AttentionClamping(nn.Module):
     def __init__(self,
                  method="None",
-                 cap_value=10.0,
+                 cap_value=64.0,
                  softness=1.0,
                  cap_type="tanh",
                  learnable=False,
@@ -42,27 +42,26 @@ class AttentionClamping(nn.Module):
         self.method = method
         self.cap_type = cap_type
         self.eps = eps
+        self.cap_value = cap_value
+        self.softness = softness
 
         if learnable:
-            self.cap_value = nn.Parameter(torch.tensor(float(cap_value)))
+            self.cap_coeff = nn.Parameter(torch.tensor(float(cap_value)))
             self.softness = nn.Parameter(torch.tensor(float(softness)))
-        else:
-            self.register_buffer("cap_value", torch.tensor(float(cap_value)))
-            self.register_buffer("softness", torch.tensor(float(softness)))
 
     # ---------- Smooth Clipping ----------
     def smooth_clip(self, d):
-        cap = self.cap_value
-        s = self.softness
+        cap = self.cap_value * self.cap_coeff + self.eps
+        s = self.softness + self.eps
 
         if self.cap_type == "tanh":
-            return cap * torch.tanh(d / (cap / s))
+            return cap * torch.tanh(d / (cap / s + self.eps))
 
         elif self.cap_type == "log":
-            return cap * torch.log1p(d / (cap * s)) / torch.log1p(1 / s)
+            return cap * torch.log1p(d / (cap * s)) / (torch.log1p(1 / s) + self.eps)
 
         elif self.cap_type == "rational":
-            return (d * cap) / (d + (cap / s))
+            return (d * cap) / (d + (cap / s) + self.eps)
 
         else:
             raise ValueError(f"Unknown cap_type: {self.cap_type}")
@@ -80,7 +79,9 @@ class AttentionClamping(nn.Module):
 
         # ---------------- Normalization ----------------
         if self.method == "normalize":
-            mean_dist = dist[dist > 0].mean(dim=(-2, -1), keepdim=True).clamp(min=self.eps)
+            mask = dist > 0
+            mean_dist = dist.masked_select(mask).mean()  # global mean over nonzero
+            mean_dist = max(mean_dist, self.eps)  # prevent division by zero
             return dist / mean_dist
 
         # ---------------- Capping (Hard or Soft) ----------------
@@ -106,11 +107,14 @@ class AttentionClamping(nn.Module):
 
 
 class Alibi2DBias(nn.Module):
-    def __init__(self, num_heads, only_x=False, clamping=None):
+    def __init__(self, num_heads, alibi_on_x=False, alibi_on_y=False, clamping=None):
         super().__init__()
         slopes = -get_alibi_slopes(num_heads).to(device='cuda')
         self.register_buffer("slopes", slopes)
-        self.only_x = only_x
+
+        self.alibi_on_x = alibi_on_x
+        self.alibi_on_y = alibi_on_y
+
         self.clamping = clamping is not None
 
         if self.clamping:
@@ -120,15 +124,17 @@ class Alibi2DBias(nn.Module):
         B, N, _ = coords.shape
         x, y = coords[..., 0].float(), coords[..., 1].float()
 
-        dx = (x[:, :, None] - x[:, None, :]).abs()
+        dist = torch.zeros_like(x[:, :, None], device=x.device)
 
-        if hasattr(self, "only_x") and self.only_x:
-            dist = dx
-        else:
+        if hasattr(self, "alibi_on_x") and self.alibi_on_x:
+            dx = (x[:, :, None] - x[:, None, :]).abs()
+            dist += dx
+
+        if hasattr(self, "alibi_on_y") and self.alibi_on_y:
             dy = (y[:, :, None] - y[:, None, :]).abs()
-            dist = dx + dy
+            dist += dy
 
-        if self.clamping:
+        if hasattr(self, "clamping") and self.clamping:
             dist = self.clamper(dist)
 
         slopes = self.slopes.to(coords.device)
