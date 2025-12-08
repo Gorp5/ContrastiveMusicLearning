@@ -6,7 +6,7 @@ import os
 import torch
 import numpy as np
 
-from data.processing import chunk_data, ReadStats
+from data.processing import chunk_data, ReadStats, chunk_data_pad
 from mtgjamendodataset.scripts import commons
 from tqdm import tqdm
 
@@ -50,7 +50,10 @@ def get_and_save_latents(dataloader, model, dataset_name, name, chunking=True, a
             directory += "full-set\\"
 
             if chunking:
-                data, num_chunks = chunk_data(data.squeeze(0), chunk_size=chunk_size)
+                if data.shape[0] == 1:
+                    data = data.squeeze(0)
+
+                data, num_chunks = chunk_data(data, chunk_size=chunk_size)
             else:
                 data = torch.tensor(data)
                 length = data.size(2)
@@ -145,23 +148,33 @@ def inference_on_directory(subset_file_name, directory_to_parse, config, model, 
     return df
 
 
-def load_and_parse_audio(full_path, convert=True, chunking=True, chunk_size=256):
+def load_and_parse_audio(full_path, convert=True, chunking=True, chunk_size=256, multiple_factor=16):
     if not convert:
         data = np.load(full_path)
     else:
         if os.path.exists(full_path):
-            audio, sr = librosa.load(full_path, sr=44100, mono=True)
-            data = librosa.feature.melspectrogram(y=audio, sr=sr)
-            data = librosa.amplitude_to_db(data, ref=np.max)
-            # s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
+            try:
+                audio, sr = librosa.load(full_path, sr=44100, mono=True)
+                data = librosa.feature.melspectrogram(y=audio, sr=sr)
+                data = librosa.amplitude_to_db(data, ref=np.max)
+                # s_chroma = librosa.feature.chroma_stft(y=s, sr=sr)
+            except Exception as e:
+                return None
         else:
             return None
 
-    if chunking:
-        chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
-        return chunked_data
-    else:
-        return torch.from_numpy(data)
+    data = torch.from_numpy(data)
+
+    if not chunking:
+        chunk_size = data.shape[1]
+
+    chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
+
+    if not chunking:
+        length = chunked_data.shape[2]
+        chunked_data = chunked_data[:,:,:length - (length % multiple_factor)]
+
+    return chunked_data
 
 
 def make_inference(model, input, config, labels=None):

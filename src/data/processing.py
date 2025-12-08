@@ -7,7 +7,7 @@ import librosa
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-
+import torch.nn.functional as F
 from tqdm import tqdm
 from mtgjamendodataset.scripts import commons
 from librosa.feature import melspectrogram
@@ -30,7 +30,6 @@ def ReadStats(subset_file):
             tag_index_dict[tags] = index - 1
 
     return tag_index_dict
-
 
 def lp_solver_2(all_tracks, all_tags, songs_per_tag=1024):
     TARGET = songs_per_tag
@@ -159,7 +158,6 @@ def parse_parallel(selected_tracks, output_dir, tag_mapping, data_location, all_
             for track_id in selected_tracks
         }
 
-        current_files = []
         with tqdm(total=len(future_to_track)) as pbar:
             for future in as_completed(future_to_track):
                 track_id = future_to_track[future]
@@ -169,7 +167,7 @@ def parse_parallel(selected_tracks, output_dir, tag_mapping, data_location, all_
                         try:
                             save_file(data_obj, path_out)
                         except Exception as e:
-                            pass
+                            print(f"Error is saving, track {track_id} generated exception: {e}")
                 except Exception as e:
                     print(f"[Error] track {track_id} generated exception: {e}")
                 finally:
@@ -216,11 +214,24 @@ def ParseBalanced(subset_file, read, data_location, output_directory, target_per
 def parse_sync(selected_tracks, output_dir, tag_mapping, data_location, all_tracks, tracks, test_prob=0.1):
     # Submit every task
     for track_id in tqdm(selected_tracks):
-        process_track(
+        output = process_track(
             track_id,
             all_tracks, tracks, data_location,
             50, tag_mapping, test_prob, output_dir
         )
+
+        try:
+            res = output
+            if res is None:
+                continue
+
+            for (path_out, data_obj) in res:
+                try:
+                    save_file(data_obj, path_out)
+                except Exception as e:
+                    print(f"Error is saving, track {track_id} generated exception: {e}")
+        except Exception as e:
+            print(f"[Error] track {track_id} generated exception: {e}")
 
 def ParseAll(subset_file, read, data_location, output_directory):
     tracks, tags, extra = commons.read_file(subset_file)
@@ -257,3 +268,26 @@ def chunk_data(data, chunk_size=256):
     data = data.permute(1, 0, 2)
 
     return data, N
+
+def chunk_data_pad(data, chunk_size=256):
+    F_dim, T = data.shape
+    remainder = T % chunk_size
+    pad_len = 0
+
+    if remainder != 0:
+        pad_len = chunk_size - remainder
+        data = F.pad(data, (0, pad_len))  # pad along time dimension
+        T += pad_len
+
+    N = T // chunk_size
+
+    # Build attention mask before reshaping
+    mask = torch.ones(T, dtype=torch.bool, device=data.device)
+    if pad_len > 0:
+        mask[-pad_len:] = False  # padded timesteps marked as False (0)
+
+    # Reshape both data and mask
+    data = data.reshape(F_dim, N, chunk_size).permute(1, 0, 2)  # [N, F, chunk_size]
+    attn_mask = mask.reshape(N, chunk_size)  # [N, chunk_size]
+
+    return data, attn_mask, N

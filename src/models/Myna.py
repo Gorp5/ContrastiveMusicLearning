@@ -277,7 +277,7 @@ class Myna(nn.Module):
             self.pos_embedding = None
 
         if self.use_y_emb:
-            self.y_pos_embedding = nn.Parameter(torch.zeros(image_height // patch_height, d_model))
+                self.y_pos_embedding = nn.Parameter(torch.zeros(image_height // patch_height, d_model))
 
         self.needs_coordinates = use_rope_x or use_rope_y or use_alibi_x or use_alibi_y
 
@@ -299,6 +299,9 @@ class Myna(nn.Module):
         B, _, H, W = img.shape
 
         x = self.to_patch_embedding(img)
+
+        if mask is not None:
+            mask = self.mask_to_patch_mask(mask).any(dim=-1)
 
         if self.use_sinusoidal:
             x += self.pos_embedding.to(device, dtype=x.dtype)

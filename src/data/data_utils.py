@@ -6,6 +6,7 @@ import os
 import csv
 import numpy as np
 import torch.nn.functional as F
+import re
 
 from datasets import tqdm
 from librosa.feature import melspectrogram
@@ -60,50 +61,81 @@ class LatentDataset(Dataset):
         if l.shape[0] == 1:
             l = l.squeeze(0)
 
-        latent = np.array(l)
+        latent = torch.from_numpy(l)
 
         return self.labels[idx], latent
 
 class GTZAN(Dataset):
-    def __init__(self, data_directory):
+    def __init__(self, data_directory, split="train"):
+        data_directory = os.path.join(data_directory, "genres_original\\")
         self.genre_folders = sorted(os.listdir(data_directory))
 
         self.data = []
         self.tags = []
 
-        self.spectrograms = []
-        self.tags = []
+        self.split = split
 
-        for index in tqdm(range(1000)):
+        self.idx_to_spectrograms = []
+        self.genre_to_num = {}
 
-            if index == 554:
-                continue
+        genre_index = 0
 
-            tag = index // 100
-            index_in_genre = index % 100
+        mel_spec_dir = os.path.join(data_directory, "mel_spec_all\\")
 
-            self.tags.append(tag)
-            folder_path = os.path.join(data_directory, self.genre_folders[tag])
+        with open(os.path.join(data_directory, split + "_filtered.txt")) as f:
+            for line in tqdm(f):
 
-            songs= sorted(os.listdir(folder_path))
-            song_path = os.path.join(folder_path, songs[index_in_genre])
+                parts = line.split("/")
+                tag = parts[0]
+                path = parts[1].strip('\n')
 
-            mel_spec = get_melspec_from_file(song_path)
+                if tag not in self.genre_to_num.keys():
+                    self.genre_to_num[tag] = genre_index
+                    genre_index += 1
 
-            self.spectrograms.append(mel_spec)
+                tag_index = self.genre_to_num[tag]
+
+                folder_path = os.path.join(data_directory, self.genre_folders[tag_index])
+                song_path = os.path.join(folder_path, path)
+
+                mel_spec_path = os.path.join(mel_spec_dir, path[:-4] + ".npy")
+
+                if not os.path.exists(mel_spec_path):
+                    mel_spec = get_melspec_from_file(song_path)
+                    if mel_spec is None:
+                        continue
+
+                    np.save(mel_spec_path, mel_spec)
+
+                self.tags.append(tag_index)
+                self.idx_to_spectrograms.append(mel_spec_path)
 
     def __len__(self):
-        return 999
+        return len(self.idx_to_spectrograms)
 
     def __getitem__(self, idx):
-        return self.tags[idx], self.spectrograms[idx]
+        tag = self.tags[idx]
+
+        path = self.idx_to_spectrograms[idx]
+        mel_spec = np.load(path)
+
+        return tag, torch.from_numpy(mel_spec)
+
 
 class MTAT(Dataset):
-    def __init__(self, data_directory, transform=None):
+    def __init__(self, data_directory, split="train"):
         self.id_to_tags = {}
         self.ids = []
 
         self.id_to_spectrograms = {}
+
+        self.valid_dir_chars = ""
+        if split == "train":
+            self.valid_dir_chars = "0123456789ab"
+        elif split == "valid":
+            self.valid_dir_chars = "c"
+        elif split == "test":
+            self.valid_dir_chars = "def"
 
         mp3_dir = os.path.join(data_directory, "mp3_all\\")
         mel_spec_dir = os.path.join(data_directory, "mel_spec_all\\")
@@ -128,6 +160,11 @@ class MTAT(Dataset):
 
                 path = row[-1].strip("\"")
 
+                directory_char = path[0]
+
+                if directory_char not in self.valid_dir_chars:
+                    continue
+
                 tags = [int(x.strip("\"")) for x in row[1:-1]]
 
                 mp3_path = os.path.join(mp3_dir, path)
@@ -145,8 +182,6 @@ class MTAT(Dataset):
 
                 self.id_to_spectrograms[id] = mel_spec_path
 
-        self.transform = transform
-
     def __len__(self):
         return len(self.ids)
 
@@ -154,13 +189,49 @@ class MTAT(Dataset):
         id = self.ids[idx]
         path = self.id_to_spectrograms[id]
         mel_spec = np.load(path)
-        return self.id_to_tags[id], mel_spec
+        return self.id_to_tags[id], torch.from_numpy(mel_spec)
+
 
 class GS(Dataset):
-    def __init__(self, data_directory, transform=None):
+    def __init__(self, data_directory, split=None):
         self.id_to_key = {}
         self.ids = []
-        self.key_to_num = {}
+        self.key_to_num = {"a major": 0,
+                        "a minor:": 1,
+                        "a# major": 2,
+                        "a# minor": 3,
+                        "a-a# minor": 4,
+                        "ab major": 5,
+                        "ab minor": 6,
+                        "b major": 7,
+                        "b minor": 8,
+                        "bb major": 9,
+                        "bb minor": 10,
+                        "c major": 11,
+                        "c minor": 12,
+                        "c# major": 13,
+                        "c# minor": 14,
+                        "d major": 15,
+                        "d minor": 16,
+                        "d# major": 17,
+                        "d# minor": 18,
+                        "db major": 19,
+                        "db minor": 20,
+                        "e major": 21,
+                        "e minor": 22,
+                        "eb major": 23,
+                        "eb minor": 24,
+                        "f major": 25,
+                        "f minor": 26,
+                        "f# major": 27,
+                        "f# minor": 28,
+                        "g major": 29,
+                        "g minor": 30,
+                        "g# major": 31,
+                        "g# minor": 32,
+                        "gb major": 33,
+                        "gb minor": 34}
+
         self.id_to_spectrograms = {}
 
         mp3_dir = os.path.join(data_directory, "audio\\")
@@ -168,19 +239,44 @@ class GS(Dataset):
 
         mel_spec_dir = os.path.join(data_directory, "mel_spec_all\\")
 
-        key_num = 0
+        key_num = 35
+
+        use_split = split is not None
+        if split is not None:
+            split_ids = []
+            with open(os.path.join(data_directory, f"{split}_ids.txt")) as f:
+                for line in f:
+                    split_ids.append(int(line))
 
         for row in tqdm(os.listdir(mp3_dir)):
             mp3_path = os.path.join(mp3_dir, row)
-            path_sections = mp3_path.split(".")[0]
+            path_sections = row.split(".")
             id = int(path_sections[0])
+
+            if use_split and id not in split_ids:
+                continue
 
             path_snub = path_sections[0] + "." + path_sections[1]
             annotation_path = os.path.join(key_dir, path_snub + ".key")
 
             key = ""
+            pattern = r'^.*?\b(major|minor)\b'
             with open(annotation_path, "r") as key_file:
                 key += key_file.readline()
+                match = re.search(pattern, key, flags=re.IGNORECASE)
+                if match:
+                    key = match.group(0)
+
+                if key[-5:] != "major" and key[-5:] != "minor":
+                    continue
+
+                if not key[0].isalpha():
+                    continue
+
+                if '/' in key:
+                    continue
+
+            key = key.strip().lower()
 
             mel_spec_path = os.path.join(mel_spec_dir, path_snub + ".npy")
 
@@ -200,8 +296,6 @@ class GS(Dataset):
 
             self.id_to_spectrograms[id] = mel_spec_path
 
-        self.transform = transform
-
     def __len__(self):
         return len(self.ids)
 
@@ -211,7 +305,75 @@ class GS(Dataset):
         path = self.id_to_spectrograms[id]
         mel_spec = np.load(path)
         key = self.id_to_key[id]
-        return self.key_to_num[key], mel_spec
+        return self.key_to_num[key], torch.from_numpy(mel_spec)
+
+
+class EmoMusic(Dataset):
+    def __init__(self, data_directory, split="train"):
+        self.id_to_arousal = {}
+        self.ids = []
+        self.id_to_valence = {}
+        self.id_to_spectrograms = {}
+
+        mp3_dir = os.path.join(data_directory, "clips_45seconds\\")
+        subset_path = os.path.join(data_directory, split + ".tsv")
+        mel_spec_dir = os.path.join(data_directory, "mel_spec_all\\")
+
+        with open(subset_path, "r", encoding="utf-8") as f:
+            header = 0
+            for line in f:
+                if header == 0:
+                    header = 1
+                    continue
+
+                parts = line.split("\t")
+
+                arousal = re.search(r'\'mean_arousal\':\s*\'(.+?)\'', parts[3]).group(1)
+                valence = re.search(r'\'mean_valence\':\s*\'(.+?)\'', parts[3]).group(1)
+
+                id = int(parts[0])
+
+                self.id_to_arousal[id] = float(arousal)
+                self.id_to_valence[id] = float(valence)
+
+        for row in tqdm(os.listdir(mp3_dir)):
+            mp3_path = os.path.join(mp3_dir, row)
+            path_sections = row.split(".")
+            id = int(path_sections[0])
+
+            if id not in self.id_to_arousal.keys():
+                continue
+
+            path_snub = path_sections[0]
+            mel_spec_path = os.path.join(mel_spec_dir, path_snub + ".npy")
+
+            if not os.path.exists(mel_spec_path):
+                mel_spec = get_melspec_from_file(mp3_path)
+                if mel_spec is None:
+                    continue
+
+                np.save(mel_spec_path, mel_spec)
+
+            self.ids.append(id)
+            self.id_to_spectrograms[id] = mel_spec_path
+
+        print(len(self.ids))
+
+
+    def __len__(self):
+        return len(self.ids)
+
+
+    def __getitem__(self, idx):
+        id = self.ids[idx]
+        path = self.id_to_spectrograms[id]
+        mel_spec = np.load(path)
+        arousal = self.id_to_arousal[id]
+        valence = self.id_to_valence[id]
+
+        coord = torch.tensor([arousal, valence], dtype=torch.float)
+
+        return coord, mel_spec
 
 class StreamViewDataset(Dataset):
     def __init__(self, data_directory: str, chunk_size=256, views=2, min=-1, max=-1):
