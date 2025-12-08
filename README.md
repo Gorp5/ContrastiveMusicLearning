@@ -1,7 +1,7 @@
 # **Myna-RPE: Relative Positional Embeddings for Track-Level Music Representations**
 
 This repository contains an implementation of **Myna-RPE**, an extension of the Myna masked contrastive learning framework for audio representation learning.  
-Myna-RPE introduces **Relative Positional Embeddings (RPE)** — including **2D ALiBi**, **1D ALiBi**, and **RoPE** variants — enabling **end-to-end track-level embeddings** from full-length mel-spectrograms **without chunking or aggregation**.
+Myna-RPE introduces **Relative Positional Embeddings (RPE)**, including **1D** and **2D** **ALiBi** and **RoPE** variants, enabling **end-to-end track-level embeddings** from full-length mel-spectrograms **without chunking or aggregation**.
 
 This code reproduces the methods and experiments described in:
 
@@ -33,8 +33,8 @@ Myna-RPE is fully modular — each positional embedding scheme can be toggled in
   - **Learned frequency embeddings**
   - **RoPE** positional embeddings
   - **Sinusoidal** positional embeddings
-- Patchout-aware RPE (coordinates preserved after masking)
-- Myna-style ViT encoder with CLS token
+- Patchout-aware RPE (coordinates preserved after patchout)
+- Myna-style AST encoder with CLS token
 - Contrastive pretraining with **InfoNCE**
 - Mel-spectrogram preprocessing pipeline
 - Training scripts for **MTG-Jamendo Top-50 Tags**
@@ -128,11 +128,9 @@ A geometry-aware embedding space opens the door to **playlist and collection mod
   - expanding a playlist’s convex hull and sampling points near its boundary  
   - using hull interpolation to create *thematic transitions* between playlists
 
-This yields playlists driven by **global musical geometry**, not just nearest neighbors.
-
 ---
 
-All models were trained using a single A100 for 512 epochs in parallel. Compute was gratefully sourced from Yonsei University's ai compute cluster (Thank you!)
+All models were trained using a single A100 for 512 epochs in parallel. Compute was gratefully provided by Yonsei University's ai compute cluster (Thank you!)
 
 ---
 
