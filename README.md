@@ -7,7 +7,6 @@ This code reproduces the methods and experiments described in:
 
 > **Relative Positional Embeddings for Track-Level Representations in Masked Contrastive Learning**
 
-All models were trained using 8 A100s from Yonsei Universities Computing Cluster (Thank you!)
 ---
 
 ##  Overview
@@ -130,6 +129,10 @@ A geometry-aware embedding space opens the door to **playlist and collection mod
   - using hull interpolation to create *thematic transitions* between playlists
 
 This yields playlists driven by **global musical geometry**, not just nearest neighbors.
+
+---
+
+All models were trained using a single A100 for 512 epochs in parallel. Compute was gratefully sourced from Yonsei University's ai compute cluster (Thank you!)
 
 ---
 
