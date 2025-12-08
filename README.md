@@ -7,6 +7,7 @@ This code reproduces the methods and experiments described in:
 
 > **Relative Positional Embeddings for Track-Level Representations in Masked Contrastive Learning**
 
+All models were trained using 8 A100s from Yonsei Universities Computing Cluster (Thank you!)
 ---
 
 ##  Overview
