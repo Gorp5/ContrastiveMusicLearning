@@ -50,7 +50,7 @@ Myna-RPE is fully modular — each positional embedding scheme can be toggled in
 | Model               | GTZAN Acc | GiantSteps Acc | EmoMusic A | EmoMusic V | Avg      |
 | ------------------- | --------- | -------------- | ---------- | ---------- | -------- |
 | 1D ALiBi + F-Embed  | 74.87     | **82.57**      | 59.37      | 43.45      | –        |
-| **2D ALiBi (Ours)** | **78.39** | 76.50          | **68.06**  | **44.05**  | **≈66%** |
+| **2D ALiBi** | **78.39** | 76.50          | **68.06**  | **44.05**  | **≈66%** |
 
 **2D ALiBi** shows consistent improvements over 1D, particularly for **genre classification** and **emotion prediction**.
 
