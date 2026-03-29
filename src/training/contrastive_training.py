@@ -1,4 +1,5 @@
 import os
+import random
 
 from info_nce import InfoNCE
 
@@ -15,7 +16,7 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
     optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
     criterion = InfoNCE()
-    model.to("cuda", config.dtype)
+    model.to(config.device, config.dtype)
 
     torch.autograd.set_detect_anomaly(True)
     
@@ -39,11 +40,11 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
             indicies, inputs, masks = batch
 
             for index, mas in enumerate(masks):
-                m = mas.to("cuda", torch.bool)
+                m = mas.to(config.device, torch.bool)
                 masks[index] = m
 
             for index, view in enumerate(inputs):
-                v = view.to("cuda", config.dtype).unsqueeze(1)
+                v = view.to(config.device, config.dtype).unsqueeze(1)
                 inputs[index] = v
                 B, _, T, F = v.shape
 
@@ -58,12 +59,12 @@ def train_contrastive(model, test_dataloader, train_dataloader, config, convex=F
             
             contrastive_loss = contrastive_loss / (len(z_list) - 1)
             loss = contrastive_loss
-
-            if convex:
-                zl = torch.stack(z_list[1:], dim=1)
-                convex_loss_score = convex_loss(zl, z_list[0])
-                epoch_convex_loss += convex_loss_score.item()
-                loss += convex_loss_score
+            #
+            # if convex:
+            #     zl = torch.stack(z_list[1:], dim=1)
+            #     convex_loss_score = convex_loss(zl, z_list[0])
+            #     epoch_convex_loss += convex_loss_score.item()
+            #     loss += convex_loss_score
 
             optimizer.zero_grad()
             loss.backward()
@@ -105,22 +106,25 @@ def evaluate_contrastive(model, dataloader, config):
     with torch.no_grad():
         for batch in tqdm(dataloader):
             indicies, inputs, masks = batch
-                
-            masks = masks.to("cuda", config.dtype)
+
+            for index, mas in enumerate(masks):
+                m = mas.to(config.device, torch.bool)
+                masks[index] = m
 
             for index, view in enumerate(inputs):
-                v = view.to("cuda", config.dtype).unsqueeze(1)
+                v = view.to(config.device, config.dtype).unsqueeze(1)
                 inputs[index] = v
                 B, _, T, F = v.shape
 
-            stacked = torch.cat(inputs, dim=0)
-            z_stacked = model(stacked, mask=masks)
-            z_list = torch.split(z_stacked, B, dim=0)
-            
+            z_list = []
+            for input, mask in zip(inputs, masks):
+                z_list.append(model(input, mask=mask))
+
             contrastive_loss = 0
+
             for index in range(1, len(z_list)):
                 contrastive_loss += criterion(z_list[0], z_list[index])
-            
+
             contrastive_loss = contrastive_loss / (len(z_list) - 1)
             song_contrastive_loss_total += contrastive_loss.item()
 

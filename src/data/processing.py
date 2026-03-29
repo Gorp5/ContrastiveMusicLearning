@@ -102,10 +102,18 @@ def process_track(track_id, all_tracks, tracks, data_location,
 
     discography_labels = (tracks[track_id]['artist_id'], tracks[track_id]['album_id'])
 
-    if os.path.exists(f"{output_directory}/train_set/data/{track_id:04d}.pt"):
+    exists1 = os.path.exists(f"{output_directory}/train_set/data/{track_id:04d}.pt")
+    exists2 = os.path.exists(f"{output_directory}/train_set/genre_labels/{track_id:04d}.pt")
+    exists3 = os.path.exists(f"{output_directory}/train_set/discography_labels/{track_id:04d}.pt")
+
+    exists4 = os.path.exists(f"{output_directory}/test_set/data/{track_id:04d}.pt")
+    exists5 = os.path.exists(f"{output_directory}/test_set/genre_labels/{track_id:04d}.pt")
+    exists6 = os.path.exists(f"{output_directory}/test_set/discography_labels/{track_id:04d}.pt")
+
+    if exists1 and exists2 and exists3:
         return None
 
-    if os.path.exists(f"{output_directory}/test_set/data/{track_id:04d}.pt"):
+    if exists4 and exists5 and exists6:
         return None
 
     if os.path.exists(full_path):
@@ -251,23 +259,43 @@ def ParseAll(subset_file, read, data_location, output_directory):
     parse_sync([x for x in all_tracks.keys()], output_directory, tag_mapping, data_location, all_tracks, tracks)
 
 
+
 def save_file(object, file_path):
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     torch.save(object, file_path)
 
 
 def chunk_data(data, chunk_size=256):
-    #data = torch.tensor(data)
-
     F, T = data.shape
     T_trunc = T - (T % chunk_size)
 
     data = data[:, :T_trunc]
+
     N = T_trunc // chunk_size
     data = data.reshape(F, N, chunk_size)
     data = data.permute(1, 0, 2)
 
     return data, N
+
+def chunk_with_remainder(data, chunk_size):
+    F, T = data.shape
+
+    T_trunc = T - (T % chunk_size)
+
+    main = data[:, :T_trunc]
+    N = T_trunc // chunk_size
+    main = main.reshape(F, N, chunk_size).permute(1, 0, 2)
+
+    remainder = data[:, T_trunc:]
+
+    # We do need to make the input a multiple of 16 as each token is a 16x16 patch
+    # This can either be done by truncating or by adding on silence
+    # Truncating is better because most songs end with a small amount of silence anyway
+    F, R = remainder.shape
+    R_trunc = R - (R % 16)
+    remainder = remainder[:, :R_trunc]
+
+    return main, remainder
 
 def chunk_data_pad(data, chunk_size=256):
     F_dim, T = data.shape
