@@ -107,13 +107,14 @@ class AttentionClamping(nn.Module):
 
 
 class Alibi2DBias(nn.Module):
-    def __init__(self, num_heads, alibi_on_x=False, alibi_on_y=False, clamping=None):
+    def __init__(self, num_heads, alibi_on_x=False, alibi_on_y=False, clamping=None, learned_alibi_slopes=False):
         super().__init__()
         slopes = -get_alibi_slopes(num_heads).to(device='cuda')
         self.register_buffer("slopes", slopes)
 
         self.alibi_on_x = alibi_on_x
         self.alibi_on_y = alibi_on_y
+        self.learned_alibi_slopes = learned_alibi_slopes
 
         self.clamping = clamping is not None
 
@@ -136,6 +137,9 @@ class Alibi2DBias(nn.Module):
 
         if hasattr(self, "clamping") and self.clamping:
             dist = self.clamper(dist)
+
+        if self.learned_alibi_slopes:
+            pass
 
         slopes = self.slopes.to(coords.device)
         dist = dist.unsqueeze(1).expand(-1, slopes.numel(), -1, -1)
