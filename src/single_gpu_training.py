@@ -46,6 +46,127 @@ embedding_configs = [
     dict(name="rope_double_frequency", rope_x=True, rope_y=True),
 ]
 
+import os
+
+from info_nce import InfoNCE
+from loss.loss_utils import *
+from datasets import tqdm
+from torch import optim
+
+
+def train_contrastive(model, test_dataloader, train_dataloader, config, start_epoch=0):
+    # Training setup
+    file_path = f"{config.save_path}\\Config.pt"
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    torch.save(config, file_path)
+
+    optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+
+    criterion = InfoNCE()
+    device = "cuda"
+    model = model.to(device=device, dtype=config.dtype)
+    torch.autograd.set_detect_anomaly(True)
+
+    if start_epoch == 0:
+        f = open(f"{config.save_path}\\Loss.txt", "w")
+        f.close()
+
+    # Training loop
+    step = 1
+    for epoch in range(start_epoch, config.num_epochs):
+        batch_steps = 0
+        epoch_same_song_contrastive_loss = 0
+        epoch_convex_loss = 0
+
+        batches = len(train_dataloader)
+        pbar = tqdm(train_dataloader)
+        for batch in pbar:
+            indicies, inputs, masks = batch
+
+            # move inputs to device
+            B, _, T, F = inputs.shape
+
+            inputs = inputs.to(device=device)
+            # masks = masks.to(device=device, dtype=torch.bool)
+
+            # stack views locally
+            # stacked = torch.cat(inputs, dim=0)  # [num_views * B, ...]
+            # stacked_masks = torch.cat(masks, dim=0)
+
+            # forward pass
+            stacked = inputs.view(B * 2, T, F).unsqueeze(1)
+            # masks = masks.view(B * 2, T, F).unsqueeze(1)
+
+            stacked = model(stacked, mask=None)
+            z_list = stacked.squeeze(1).view(B, 2, -1)
+
+            contrastive_loss = 0
+
+            for index in range(1, len(z_list)):
+                contrastive_loss += criterion(z_list[0], z_list[index])
+
+            contrastive_loss = contrastive_loss / (len(z_list) - 1)
+            loss = contrastive_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_same_song_contrastive_loss += contrastive_loss.item()
+
+            step += 1
+            batch_steps += 1
+
+            term = f"Contrastive Loss [{batch_steps}/{batches}]: {contrastive_loss.item():.4f}"
+
+            with open(f"{config.save_path}\\Loss.txt", "a") as f:
+                term += "\n"
+                f.write(term)
+
+        same_song_contrastive_loss = evaluate_contrastive(model, test_dataloader, config)
+
+        term = f"[Epoch {epoch}] Train: Same Song Contrastive Loss = {epoch_same_song_contrastive_loss / batch_steps:.4f}"
+
+        term += "\n"
+        term += f"Test: Same Song Contrastive Loss = {same_song_contrastive_loss:.4f}"
+
+        term += "\n"
+
+        print(term)
+
+        torch.save(model, f".\\{config.save_path}\\Epoch-{epoch}.pt")
+
+
+def evaluate_contrastive(model, dataloader, config):
+    song_contrastive_loss_total = 0
+
+    criterion = InfoNCE()
+
+    with torch.no_grad():
+        for batch in tqdm(dataloader):
+            indicies, inputs, masks = batch
+
+            # move inputs to device
+            B, _, T, F = inputs.shape
+
+            inputs = inputs.to(device=config.device)
+
+            # forward pass
+            stacked = inputs.view(B * 2, T, F).unsqueeze(1)
+            # masks = masks.view(B * 2, T, F).unsqueeze(1)
+
+            stacked = model(stacked, mask=None)
+            z_list = stacked.squeeze(1).view(B, 2, -1)
+
+            contrastive_loss = 0
+            for index in range(1, len(z_list)):
+                contrastive_loss += criterion(z_list[0], z_list[index])
+
+            contrastive_loss = contrastive_loss / (len(z_list) - 1)
+            song_contrastive_loss_total += contrastive_loss.item()
+
+    return song_contrastive_loss_total / len(dataloader)
+
 embedding_strategy_params = []
 def determine_based_on_id(id):
     masking_ratio_index = id % 4

@@ -1,4 +1,4 @@
---index-url https://download.pytorch.org/whl/cu121
+--extra-index-url https://download.pytorch.org/whl/cu121
 torch
 torchaudio==2.10.0
 tqdm==4.67.3

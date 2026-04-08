@@ -35,7 +35,7 @@ def cleanup():
     dist.destroy_process_group()
 
 def reduce_mean(tensor, world_size):
-    rt = tensor.clone()
+    rt = tensor.cl3 one()
     dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= world_size
     return rt
