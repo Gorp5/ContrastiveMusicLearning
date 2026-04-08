@@ -1,10 +1,8 @@
 import os
-
 import torch
 
-
 class Config():
-    def __init__(self, save_path, num_epochs, learning_rate, weight_decay, batch_size=512, num_workers=1, eval_batch_size=64, dtype=torch.float32):
+    def __init__(self, save_path, num_epochs, learning_rate, weight_decay, batch_size=512, num_workers=1, eval_batch_size=64, dtype=torch.float32, device = "cpu"):
         self.save_path = save_path
         self.num_epochs = num_epochs
         self.learning_rate = learning_rate
@@ -13,6 +11,7 @@ class Config():
         self.num_workers = num_workers
         self.eval_batch_size = eval_batch_size
         self.dtype = dtype
+        self.device = device
 
     def save(self, filename=None):
         if filename is None:

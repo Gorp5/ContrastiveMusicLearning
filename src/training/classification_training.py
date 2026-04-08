@@ -4,12 +4,73 @@ import torch
 
 from utils.visualization import visualize_ROC_PR_AUC
 from datasets import tqdm
-from torch import optim
+from torch import optim, nn
 
+
+def train_contrastive(model, test_dataloader, train_dataloader, config, pos_weight):
+    # Training setup
+    file_path = f".\\{config.save_path}\\Config.pt"
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    torch.save(config, file_path)
+
+    optimizer = optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+
+    criterion = nn.BCEWithLogitsLoss(reduction='mean', pos_weight=pos_weight)#FocalLoss(gamma=0.5, reduction='mean', pos_weight=pos_weight)
+    model.to("cuda", config.dtype)
+
+    torch.autograd.set_detect_anomaly(True)
+
+    # Training loop
+    step = 1
+    for epoch in range(config.num_epochs):
+        batch_steps = 0
+        epoch_same_song_contrastive_loss = 0
+        epoch_convex_loss = 0
+
+        batches = len(train_dataloader)
+
+        for batch in tqdm(train_dataloader):
+            indicies, inputs, masks, labels = batch
+
+            for index, mas in enumerate(masks):
+                m = mas.to("cuda", torch.bool)
+                masks[index] = m
+
+            outputs = model(inputs, masks)
+            loss = criterion(outputs, labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            epoch_same_song_contrastive_loss += contrastive_loss.item()
+
+            step += 1
+            batch_steps += 1
+
+            term = f"Contrastive Loss [{batch_steps}/{batches}]: {contrastive_loss.item():.4f}"
+
+            with open(f".\\{config.save_path}\\Loss.txt", "a") as f:
+                term += "\n"
+                f.write(term)
+
+        same_song_contrastive_loss = evaluate_contrastive(model, test_dataloader, config)
+
+        term = f"[Epoch {epoch}] Train: Same Song Contrastive Loss = {epoch_same_song_contrastive_loss / batch_steps:.4f}"
+
+        if convex:
+            term += f"\t|\tConvex Loss = {epoch_convex_loss / batch_steps:.4f}"
+
+        term += "\n"
+        term += f"Test: Same Song Contrastive Loss = {same_song_contrastive_loss:.4f}"
+
+        term += "\n"
+
+        print(term)
+
+        torch.save(model, f".\\{config.save_path}\\Epoch-{epoch}.pt")
 
 def train_classifier(model, test_dataloader, train_dataloader, criterion, save_directory):
     model_save_path = save_directory
-
 
     # Training setup
     file_path = f".\\{config.save_path}\\Config.pt"

@@ -4,14 +4,15 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.optim as optim
+
+from functools import partial
 from info_nce import InfoNCE
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DistributedSampler
 from tqdm import tqdm
-
+from functools import partial
 from data.data_utils import StreamViewDataset
 from models.Myna import Myna
-from training.contrastive_training import evaluate_contrastive
 from utils.Config import Config
 
 
@@ -21,13 +22,14 @@ def setup_process_group(rank, world_size, backend="nccl", master_addr=None, mast
     os.environ.setdefault("MASTER_PORT", "12355")
     os.environ.setdefault("WORLD_SIZE", str(world_size))
     os.environ.setdefault("RANK", str(rank))
-    
+
     if master_addr:
         os.environ["MASTER_ADDR"] = master_addr
     if master_port:
         os.environ["MASTER_PORT"] = master_port
-        
+
     dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+
 
 def cleanup():
     dist.destroy_process_group()
@@ -41,9 +43,13 @@ def reduce_mean(tensor, world_size):
 def is_main_process(rank):
     return rank == 0
 
+def gather_features(z):
+    z_list = [torch.zeros_like(z) for _ in range(dist.get_world_size())]
+    dist.all_gather(z_list, z)
+    return torch.cat(z_list, dim=0)
+
 def ddp_train_worker(rank, world_size, model_fn, dataset_builder, config,
                      start_epoch=0, master_addr=None, master_port=None):
-
     # 1) init
     torch.cuda.set_device(rank)
     setup_process_group(rank, world_size, master_addr=master_addr, master_port=master_port)
@@ -57,25 +63,17 @@ def ddp_train_worker(rank, world_size, model_fn, dataset_builder, config,
     # 3) build dataloaders with DistributedSampler
     train_dataset, test_dataset = dataset_builder()
     train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
-    test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False)
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=config.batch_size,
         sampler=train_sampler,
-        num_workers=config.num_workers,
+        num_workers=6,
+        persistent_workers=True,
+        prefetch_factor=1,
         pin_memory=True,
         drop_last=False,
-        collate_fn=None
-    )
-
-    test_dataloader = torch.utils.data.DataLoader(
-        test_dataset,
-        batch_size=config.eval_batch_size if hasattr(config, "eval_batch_size") else config.batch_size,
-        sampler=test_sampler,
-        num_workers=config.num_workers,
-        pin_memory=True,
-        drop_last=False
+        collate_fn=None,
     )
 
     # 4) set up optimizer / loss
@@ -89,8 +87,6 @@ def ddp_train_worker(rank, world_size, model_fn, dataset_builder, config,
         # Clear loss file
         with open(os.path.join(".", config.save_path, "Loss.txt"), "w") as f:
             pass
-
-    torch.autograd.set_detect_anomaly(True)
 
     world_size_f = float(world_size)
     step = 1
@@ -106,7 +102,7 @@ def ddp_train_worker(rank, world_size, model_fn, dataset_builder, config,
         pbar = tqdm(train_dataloader, desc=f"Rank {rank} Epoch {epoch}", disable=(not is_main_process(rank)))
 
         for batch in pbar:
-            indicies, inputs = batch
+            indicies, inputs, masks = batch
 
             # move inputs to device
             for index, view in enumerate(inputs):
@@ -114,21 +110,37 @@ def ddp_train_worker(rank, world_size, model_fn, dataset_builder, config,
                 inputs[index] = v
                 B, _, T, F = v.shape
 
-            stacked = torch.cat(inputs, dim=0)
-            z_stacked = model(stacked)
-            z_list = torch.split(z_stacked, B, dim=0)
+            for index, mas in enumerate(masks):
+                masks[index] = mas.to(device, torch.bool)
 
+            # stack views locally
+            stacked = torch.cat(inputs, dim=0)  # [num_views * B, ...]
+            stacked_masks = torch.cat(masks, dim=0)
+
+            # forward pass
+            z_stacked = model(stacked, mask=stacked_masks)
+            z_list = torch.split(z_stacked, B, dim=0)  # list of [B, D]
+
+            # ---- NEW PART: gather features across GPUs ----
+            z_list_global = [gather_features(z) for z in z_list]
+            # each z_list_global[i] is [world_size * B, D]
+
+            # contrastive loss with global negatives
             contrastive_loss = 0.0
-            for i in range(1, len(z_list)):
-                contrastive_loss = contrastive_loss + criterion(z_list[0], z_list[i])
-            contrastive_loss = contrastive_loss / (len(z_list) - 1)
+            for i in range(1, len(z_list_global)):
+                contrastive_loss = contrastive_loss + criterion(
+                    z_list_global[0],
+                    z_list_global[i]
+                )
+
+            contrastive_loss = contrastive_loss / (len(z_list_global) - 1)
             loss = contrastive_loss
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
 
-            # accumulate local metrics
+            # logging
             epoch_contrastive_loss += contrastive_loss.detach().cpu()
             batch_steps += 1
             step += 1
@@ -147,74 +159,70 @@ def ddp_train_worker(rank, world_size, model_fn, dataset_builder, config,
         dist.all_reduce(local_contrastive_sum, op=dist.ReduceOp.SUM)
         dist.all_reduce(local_batches, op=dist.ReduceOp.SUM)
 
-        avg_train_contrastive_loss = (local_contrastive_sum / local_batches).item() if local_batches.item() > 0 else float("nan")
+        avg_train_contrastive_loss = (
+                    local_contrastive_sum / local_batches).item() if local_batches.item() > 0 else float("nan")
 
         # synchronize before evaluation
         dist.barrier()
 
         # run evaluate on rank 0
-        if is_main_process(rank):
-            same_song_contrastive_loss = evaluate_contrastive(model.module, test_dataloader, config)
-        else:
-            same_song_contrastive_loss = None
-
-        same_song_tensor = torch.tensor([same_song_contrastive_loss if same_song_contrastive_loss is not None else -1.0],
-                                       dtype=torch.float32, device=device)
-        dist.broadcast(same_song_tensor, src=0)
-        same_song_contrastive_loss = float(same_song_tensor.item())
+        # if is_main_process(rank):
+        #    same_song_contrastive_loss = evaluate_contrastive(model.module, test_dataloader, config)
+        # else:
+        #    same_song_contrastive_loss = None
+        #
+        # same_song_tensor = torch.tensor([same_song_contrastive_loss if same_song_contrastive_loss is not None else -1.0],
+        #                               dtype=torch.float32, device=device)
+        # dist.broadcast(same_song_tensor, src=0)
+        # same_song_contrastive_loss = float(same_song_tensor.item())
 
         # Save checkpoint on main process
         if is_main_process(rank):
             torch.save(model.module, os.path.join(".", config.save_path, f"Epoch-{epoch}.pt"))
             term = f"[Epoch {epoch}] Train: Same Song Contrastive Loss = {avg_train_contrastive_loss:.4f}"
-            term += f"\nTest: Same Song Contrastive Loss = {same_song_contrastive_loss:.4f}\n"
+            # term += f"\nTest: Same Song Contrastive Loss = {same_song_contrastive_loss:.4f}\n"
             print(term)
 
     # cleanup
     cleanup()
 
-def get_model_function(mask_ratio=0.9, length=256, use_cls=True, use_sinusoidal=False,
-                       use_y_emb=False, use_rope_x=False, use_rope_y=False, rope_base=-1,
-                       use_alibi_x=False, use_alibi_y=False, predict_tempo=False):
-    def create_model():
-        model = Myna(
-            image_size=(128, length),
-            channels=1,
-            patch_size=(16, 16),
-            latent_space=128,
-            d_model=384,
-            depth=12,
-            heads=6,
-            mlp_dim=1536,
-            mask_ratio=mask_ratio,
-            use_cls=use_cls,
-            predict_tempo=predict_tempo,
-            use_sinusoidal=use_sinusoidal,
-            use_y_emb=use_y_emb,
-            use_rope_x=use_rope_x,
-            use_rope_y=use_rope_y,
-            rope_base=rope_base,
-            use_alibi_x=use_alibi_x,
-            use_alibi_y=use_alibi_y
-            # clamping=AttentionClamping(method="cap", cap_type="tanh", cap_value=16, learnable=False)
-        )
 
-        return model
+def get_model_function(mask_ratio=0.9, length=256, use_cls=True, use_sinusoidal=False, use_y_emb=False,
+                       use_rope_x=False, use_rope_y=False, rope_base=-1, use_alibi_x=False, use_alibi_y=False,
+                       predict_tempo=False):
+    model = Myna(
+        image_size=(128, length),
+        channels=1,
+        patch_size=(16, 16),
+        latent_space=128,
+        d_model=384,
+        depth=12,
+        heads=6,
+        mlp_dim=1536,
+        mask_ratio=mask_ratio,
+        use_cls=use_cls,
+        predict_tempo=predict_tempo,
+        use_sinusoidal=use_sinusoidal,
+        use_y_emb=use_y_emb,
+        use_rope_x=use_rope_x,
+        use_rope_y=use_rope_y,
+        rope_base=rope_base,
+        use_alibi_x=use_alibi_x,
+        use_alibi_y=use_alibi_y
+    )
 
-    return create_model
+    return model
+
 
 def create_dataset_builder(dataset_dir, chunk_size, views=2):
-    def build_datasets_fn():
-        train_dataset = StreamViewDataset(dataset_dir, views=views, chunk_size=chunk_size)
-        test_dataset = StreamViewDataset(dataset_dir, views=views, chunk_size=chunk_size)
-        return train_dataset, test_dataset
-    return build_datasets_fn
+    train_dataset = StreamViewDataset(dataset_dir, views=views, chunk_size=chunk_size)
+    test_dataset = StreamViewDataset(dataset_dir, views=views, chunk_size=chunk_size)
+    return train_dataset, test_dataset
 
 
 def add_fields(model, use_sinusoidal=False, use_y_emb=False,
                use_rope_x=False, use_rope_y=False, rope_base=-1,
                use_alibi_x=False, use_alibi_y=False):
-
     model.use_cls = True
     model.predict_tempo = False
     model.use_sinusoidal = use_sinusoidal
@@ -231,6 +239,7 @@ def add_fields(model, use_sinusoidal=False, use_y_emb=False,
 
     return model
 
+
 if __name__ == "__main__":
     world_size = torch.cuda.device_count()
 
@@ -240,39 +249,44 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, required=True)
     parser.add_argument("--epochs", type=int, required=True)
     parser.add_argument("--chunk_length", type=int, required=True)
-    parser.add_argument("--mask_ratio", type=int, required=True)
-    parser.add_argument("--use_cls", type=int, required=False, default=True)
-    parser.add_argument("--use_sinusoidal", type=int, required=False, default=False)
-    parser.add_argument("--use_y_emb", type=int, required=False, default=False)
-    parser.add_argument("--use_rope_x", type=int, required=False, default=False)
-    parser.add_argument("--use_rope_y", type=int, required=False, default=False)
+    parser.add_argument("--mask_ratio", type=float, required=True)
+    parser.add_argument("--use_cls", type=bool, required=False, default=True)
+    parser.add_argument("--use_sinusoidal", type=bool, required=False, default=False)
+    parser.add_argument("--use_y_emb", type=bool, required=False, default=False)
+    parser.add_argument("--use_rope_x", type=bool, required=False, default=False)
+    parser.add_argument("--use_rope_y", type=bool, required=False, default=False)
     parser.add_argument("--rope_base", type=int, required=False, default=4096)
-    parser.add_argument("--use_alibi_x", type=int, required=False, default=False)
-    parser.add_argument("--use_alibi_y", type=int, required=False, default=False)
-    parser.add_argument("--predict_tempo", type=int, required=False, default=False)
+    parser.add_argument("--use_alibi_x", type=bool, required=False, default=False)
+    parser.add_argument("--use_alibi_y", type=bool, required=False, default=False)
+    parser.add_argument("--predict_tempo", type=bool, required=False, default=False)
 
     args = parser.parse_args()
+
+    assert args.batch_size % world_size == 0
+    per_gpu_batch = args.batch_size // world_size
+    config.batch_size = per_gpu_batch
 
     config = Config(
         save_path=args.save_dir,
         num_epochs=args.epochs,
         learning_rate=3e-4,
         weight_decay=1e-4,
-        num_workers=1,
-        batch_size= args.batch_size,
-        eval_batch_size=args.batch_size,
+        num_workers=2,
+        batch_size=per_gpu_batch,
+        eval_batch_size=per_gpu_batch,
         dtype=torch.float32
     )
 
     # Determines which model is trained
-    model_builder = get_model_function(mask_ratio=args.mask_ratio, length=args.chunk_length,
-                                       use_cls=args.use_cls, use_sinusoidal=args.use_sinusoidal, use_y_emb=args.use_y_emb,
-                                       use_rope_x=args.use_rope_x, use_rope_y=args.use_rope_y, rope_base=args.rope_base,
-                                       use_alibi_x=args.use_alibi_x, use_alibi_y=args.use_alibi_y, predict_tempo=args.predict_tempo)
+    model_builder = partial(get_model_function, mask_ratio=args.mask_ratio, length=args.chunk_length,
+                            use_cls=args.use_cls, use_sinusoidal=args.use_sinusoidal, use_y_emb=args.use_y_emb,
+                            use_rope_x=args.use_rope_x, use_rope_y=args.use_rope_y, rope_base=args.rope_base,
+                            use_alibi_x=args.use_alibi_x, use_alibi_y=args.use_alibi_y,
+                            predict_tempo=args.predict_tempo)
 
-    dataset_builder = create_dataset_builder(args.dataset_dir, args.chunk_length, views=2)
+    dataset_builder = partial(create_dataset_builder, args.dataset_dir, args.chunk_length, views=2)
 
     mp.spawn(ddp_train_worker,
-             args=(world_size, model_builder, dataset_builder, config, 0,  None, None),
+             args=(world_size, model_builder, dataset_builder, config, 0, None, None),
              nprocs=world_size,
              join=True)

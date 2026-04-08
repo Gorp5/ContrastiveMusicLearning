@@ -1,10 +1,8 @@
 import argparse
 import torch
 
-
-from AblationEvaluation import masking_ratio
 from contrastive_training import train_contrastive
-from data.data_utils import StreamViewDataset
+from data.data_utils import StreamViewDataset, MemmapDataset
 from models.Myna import Myna
 from utils.Config import Config
 
@@ -37,10 +35,10 @@ BASE_CONFIG = dict(
 
 embedding_configs = [
     dict(name="alibi_2d_learned", alibi_x=True, alibi_y=True, alibi_learned_slopes=True),
+    dict(name="alibi_2d", alibi_x=True, alibi_y=True),
+    dict(name="rope_2d", rope_x=True, rope_y=True),
     dict(name="alibi_1d",         alibi_x=True),
-    dict(name="alibi_2d",         alibi_x=True, alibi_y=True),
     dict(name="rope_1d",          rope_x=True),
-    dict(name="rope_2d",          rope_x=True, rope_y=True),
     dict(name="sinusoidal_raster", sinusoidal_raster=True),
     dict(name="learned_x",        learned_x=True, learned_y=True),
     dict(name="none"),
@@ -66,16 +64,21 @@ if __name__ == "__main__":
     world_size = torch.cuda.device_count()
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_dir", type=str, required=True)
+    parser.add_argument("--id", type=int, required=True)
     parser.add_argument("--save_dir", type=str, required=True)
+    parser.add_argument("--test_data_dir", type=str, required=True)
+    parser.add_argument("--train_data_dir", type=str, required=True)
     parser.add_argument("--latent_projection_method", type=str, required=False, default="cls")
     parser.add_argument("--batch_size", type=int, required=True)
     parser.add_argument("--epochs", type=int, required=True)
     parser.add_argument("--rope_base", type=int, required=False, default=4096)
+    parser.add_argument("--chunk_length", type=int, required=False, default=256)
     parser.add_argument("--use_time_chunking", type=bool, required=False, default=False)
 
-    id = sys.argv[1]
-    masking_ratio, training_chunk_lengths, params = determine_based_on_id(id)
+    args = parser.parse_args()
+
+    id = args.id
+    mask_ratio, training_chunk_lengths, params = determine_based_on_id(id)
 
     use_alibi_x = params["alibi_x"]
     use_alibi_y = params["alibi_y"]
@@ -87,10 +90,9 @@ if __name__ == "__main__":
     use_sinusoidal_y = params["sinusoidal_y"]
     use_learned_x = params["learned_x"]
     use_learned_y = params["learned_y"]
+    name = params["name"]
 
-    print(f"Running task {id}: {params["name"]}:{id % 20}")
-
-    args = parser.parse_args()
+    print(f"Running task {id}: {name}:{id % 20}")
 
     per_gpu_batch = args.batch_size
 
@@ -102,7 +104,8 @@ if __name__ == "__main__":
         num_workers=2,
         batch_size=per_gpu_batch,
         eval_batch_size=per_gpu_batch,
-        dtype=torch.float32
+        dtype=torch.float32,
+        device="cuda"
     )
 
     patch_size = (16, 16)
@@ -119,7 +122,7 @@ if __name__ == "__main__":
         depth=12,
         heads=6,
         mlp_dim=1536,
-        mask_ratio=args.mask_ratio,
+        mask_ratio=mask_ratio,
         latent_projection_method=args.latent_projection_method,
         use_sinusoidal_x=use_sinusoidal_x,
         use_sinusoidal_y=use_sinusoidal_y,
@@ -132,10 +135,26 @@ if __name__ == "__main__":
         use_learned_alibi_slopes=use_learned_alibi_slopes,
         use_alibi_x=use_alibi_x,
         use_alibi_y=use_alibi_y,
-        rope_base=args.rope_base
+        rope_base=8192
     )
 
-    train_dataset = StreamViewDataset(args.dataset_dir, views=2, chunk_size=args.chunk_length)
-    test_dataset = StreamViewDataset(args.dataset_dir, views=2, chunk_size=args.chunk_length)
+    train_dataset = MemmapDataset(args.train_data_dir, split="train", views=2, chunk_size=args.chunk_length)
+    test_dataset = MemmapDataset(args.test_data_dir, split="test", views=2, chunk_size=args.chunk_length)
 
-    train_contrastive(model, test_dataset, train_dataset, config)
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=config.batch_size,
+        num_workers=3,
+        pin_memory=True,
+        shuffle=True,
+        # prefetch_factor=1,
+    )
+
+    test_dataloader = torch.utils.data.DataLoader(
+        test_dataset,
+        batch_size=config.batch_size,
+        num_workers=3,
+        # prefetch_factor=1
+    )
+
+    train_contrastive(model, test_dataloader, train_dataloader, config)

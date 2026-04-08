@@ -125,26 +125,25 @@ class Rotary2D(nn.Module):
         rotated = rotated.transpose(axis_dim, -2)
         return torch.cat([left, rotated, right], dim=-1)
 
-    def forward(self, x, coords):
+    def forward(self, q, k, coords):
         if coords is None:
-            return x
+            return q, k
 
-        out = x
         for axis_name, axis_slice in self.axis_slices:
             axis_index = 0 if axis_name == "x" else 1
             axis_coords = coords[..., axis_index]  # [B, H, W]
             cos, sin = self._axis_cos_sin(axis_coords, axis_name)  # [B, H, W, half_dim]
 
             # Apply along the corresponding axis
-            out = self._apply_axis(out, axis_slice, cos, sin, axis_index)
+            q = self._apply_axis(q, axis_slice, cos, sin, axis_index)
+            k = self._apply_axis(k, axis_slice, cos, sin, axis_index)
 
-        return out
+        return q, k
     
 
 class Attention(nn.Module):
     def __init__(self, dim, heads=8, dim_head=64,
-                 rope_base=-1, rope_on_x=False, rope_on_y=False,
-                 predict_tempo=False):
+                 rope_base=-1, rope_on_x=False, rope_on_y=False):
         super().__init__()
 
         inner_dim = dim_head * heads
@@ -164,109 +163,17 @@ class Attention(nn.Module):
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
         self.to_out = nn.Linear(inner_dim, dim, bias=False)
 
-        # ===== Latent tempo / rhythm =====
-        self.use_latent_tempo = False
-        self.predict_tempo = False
-        self.max_log_speed = 1.5
-
-        if predict_tempo:
-            if predict_tempo == "CNN":
-                self.tempo_head = TempoEstimatorCNN(dim)
-
-                nn.init.constant_(self.tempo_head.head[-1].weight, 0.0)
-                nn.init.constant_(self.tempo_head.head[-1].bias, 0.7)
-
-            elif predict_tempo == "MLP":
-                self.tempo_head = nn.Sequential(
-                    nn.Linear(dim, dim // 2),
-                    nn.GELU(),
-                    nn.Linear(dim // 2, 1),
-                    nn.Softplus()
-                )
-
-                nn.init.constant_(self.tempo_head[-2].weight, 0.0)
-                nn.init.constant_(self.tempo_head[-2].bias, 0.7)
-
-            elif predict_tempo == "latent":
-
-                self.num_rhythm_heads = heads // 2  # e.g. half rhythmic
-                self.rhythm_head_mask = torch.zeros(heads, dtype=torch.bool)
-                self.rhythm_head_mask[:self.num_rhythm_heads] = True
-                self.register_buffer("rhythm_head_mask", self.rhythm_head_mask)
-
-                self.use_latent_tempo = True
-
-                self.rhythm_token = nn.Parameter(torch.randn(1, 1, dim))
-
-                # project token interaction → scalar latent
-                self.rhythm_proj = nn.Linear(dim, dim, bias=False)
-                # learnable phase offset (beat alignment)
-                self.rope_offset = nn.Parameter(torch.zeros(1))
-
 
     def forward(self, x, alibi_bias=None, coords=None, mask=None):
         B, N, D = x.shape
-
-        if self.predict_tempo == "latent":
-            rhythm = self.rhythm_token.expand(B, -1, -1)
-            x = torch.cat([rhythm, x], dim=1)
 
         x = self.norm(x)
 
         qkv = self.to_qkv(x).chunk(3, dim=-1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv)
 
-        tempo_scale = None
-
-        if self.predict_tempo:
-            if self.predict_tempo == "latent":
-
-                # latent tempo per token
-                rhythm_state = F.normalize(x[:, 0], dim=-1)
-                token_states = x[:, 1:]
-
-                proj_tokens = self.rhythm_proj(token_states)
-                z = torch.einsum('bnd,bd->bn', proj_tokens, rhythm_state)
-
-                z = torch.tanh(z) * self.max_log_speed
-                delta_t = torch.exp(z)
-                tempo_coords = torch.cumsum(delta_t, dim=1)
-
-                tempo_coords = torch.cat(
-                    [torch.zeros(B, 1, device=x.device), tempo_coords],
-                    dim=1
-                )
-
-                if coords is not None and coords.shape[1] + 1 == x.shape[1]:
-                    tempo_scale = tempo_coords[:, 1:]  # remove CLS
-                else:
-                    tempo_scale = tempo_coords
-            else:
-                without_cls = x[:, 1:] if coords.shape[1] + 1 == x.shape[1] else x
-                tempo_scale = self.tempo_head(without_cls)
-                if self.predict_tempo == "MLP":
-                    tempo_scale = tempo_scale.squeeze(2)
-
         if self.rotary is not None:
-            # rhythm_heads = self.rhythm_head_mask
-            # non_rhythm_heads = ~rhythm_heads
-            #
-            # # rhythm-aware heads
-            # if rhythm_heads.any():
-            #     q_r, k_r = self.rotary(
-            #         q[:, rhythm_heads],
-            #         k[:, rhythm_heads],
-            #         coords,
-            #         tempo_scale
-            #     )
-            #     q[:, rhythm_heads] = q_r
-            #     k[:, rhythm_heads] = k_r
-            #
-            # # non-rhythm heads
-            # if non_rhythm_heads.any():
-            #     pass
-
-            q, k = self.rotary(q, k, coords, tempo_scale)
+            q, k = self.rotary(q, k, coords)
 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
@@ -285,15 +192,18 @@ class Attention(nn.Module):
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
 
-        return self.to_out(out[:, 1:] if self.use_latent_tempo else out)
+        return  out
 
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim,
-                 use_rope_x=False, use_rope_y=False,
-                 alibi_on_x=False, alibi_on_y=False,
-                 clamping=None, rope_base=-1,
+                 clamping=None,
+                 alibi_on_x=False,
+                 alibi_on_y=False,
                  learned_alibi_slopes=False,
-                 predict_tempo=False):
+                 use_rope_x=False,
+                 use_rope_y=False,
+                 rope_base=4096,
+                 use_rope_double_frequency=False):
 
         super().__init__()
 
@@ -306,7 +216,7 @@ class Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(dim, heads=heads, dim_head=dim_head, rope_base=rope_base, rope_on_x=use_rope_x, rope_on_y=use_rope_y, predict_tempo=predict_tempo),
+                Attention(dim, heads=heads, dim_head=dim_head, rope_base=rope_base, rope_on_x=use_rope_x, rope_on_y=use_rope_y),
                 FeedForward(dim, mlp_dim)
             ]))
 
@@ -338,8 +248,11 @@ class Transformer(nn.Module):
         return self.norm(x)
 
 class StaticEmbeddings(nn.Module):
-    def __init__(self, shape, image_height, image_width, patch_height, patch_width, d_model, use_sinusoidal_x=False,
-                 use_sinusoidal_y=False, use_sinusoidal_raster=False, use_learned_encoding_y=False,
+    def __init__(self, shape, image_height, image_width, patch_height, patch_width, d_model,
+                 use_sinusoidal_x=False,
+                 use_sinusoidal_y=False,
+                 use_sinusoidal_raster=False,
+                 use_learned_encoding_y=False,
                  use_learned_encoding_x=False):
 
         super().__init__()
@@ -441,7 +354,8 @@ class Myna(nn.Module):
         use_learned_encoding_y = False,
         use_learned_encoding_x = False,
         use_rope_double_frequency = False,
-        use_cls = False, clamping = None, predict_tempo = False):
+        use_cls = True,
+        clamping = None):
 
         super().__init__()
 
@@ -459,40 +373,47 @@ class Myna(nn.Module):
 
         patch_dim = channels * patch_height * patch_width
 
-        self.to_patch_embedding = self.make_embedding_projection(patch_height, patch_width, patch_dim, d_model)
+        self.to_patch_embedding = nn.Sequential(
+            Rearrange("b c (h p1) (w p2) -> b (h w) (p1 p2 c)", p1=patch_height, p2=patch_width),
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, d_model),
+            nn.LayerNorm(d_model),
+        ).to("cuda")
 
         self.pos_embedding = StaticEmbeddings((1, self.num_patches, patch_dim), image_height, image_width, patch_height, patch_width, d_model,
                                                              use_sinusoidal_x=use_sinusoidal_x,
                                                              use_sinusoidal_y=use_sinusoidal_y,
                                                              use_sinusoidal_raster=use_sinusoidal_raster,
                                                              use_learned_encoding_y=use_learned_encoding_y,
-                                                             use_learned_encoding_x=use_learned_encoding_x)
+                                                             use_learned_encoding_x=use_learned_encoding_x).to("cuda")
 
-        self.use_rope_x = use_rope_x,
-        self.use_rope_y = use_rope_y,
-        self.use_alibi_x = use_alibi_x,
-        self.use_alibi_y = use_alibi_y,
-        self.use_learned_alibi_slopes = use_learned_alibi_slopes,
-        self.rope_base = rope_base,
-        self.latent_projection_method = latent_projection_method,
-        self.use_sinusoidal_x = use_sinusoidal_x,
-        self.use_sinusoidal_y = use_sinusoidal_y,
-        self.use_sinusoidal_raster = use_sinusoidal_raster,
-        self.use_learned_encoding_y = use_learned_encoding_y,
-        self.use_learned_encoding_x = use_learned_encoding_x,
-        self.use_rope_double_frequency = use_rope_double_frequency,
+        self.use_rope_x = use_rope_x
+        self.use_rope_y = use_rope_y
+        self.use_alibi_x = use_alibi_x
+        self.use_alibi_y = use_alibi_y
+        self.use_learned_alibi_slopes = use_learned_alibi_slopes
+        self.rope_base = rope_base
+        self.latent_projection_method = latent_projection_method
+        self.use_sinusoidal_x = use_sinusoidal_x
+        self.use_sinusoidal_y = use_sinusoidal_y
+        self.use_sinusoidal_raster = use_sinusoidal_raster
+        self.use_learned_encoding_y = use_learned_encoding_y
+        self.use_learned_encoding_x = use_learned_encoding_x
+        self.use_rope_double_frequency = use_rope_double_frequency
 
         self.needs_coordinates = use_rope_x or use_rope_y or use_alibi_x or use_alibi_y
 
-        self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, clamping=clamping,
-                                       rope_on_x=use_rope_x, rope_on_y=use_rope_y, alibi_on_x=use_alibi_x, alibi_on_y=use_alibi_y,
-                                       rope_base=rope_base, predict_tempo=predict_tempo)
+        self.patch_coordinates = self.get_patch_coordinates(self.num_patches_y, self.num_patches_x, "cuda")
+
+        # self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, clamping=clamping,
+        #                                rope_on_x=use_rope_x, rope_on_y=use_rope_y, alibi_on_x=use_alibi_x, alibi_on_y=use_alibi_y,
+        #                                rope_base=rope_base, predict_tempo=predict_tempo)
 
         self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, clamping=clamping,
                                        use_rope_x=self.use_rope_x,
                                        use_rope_y=self.use_rope_y,
                                        rope_base=self.rope_base,
-                                       learned_alibi_slopes = self.learned_alibi_slopes,
+                                       learned_alibi_slopes = self.use_learned_alibi_slopes,
                                        use_rope_double_frequency=self.use_rope_double_frequency,
                                        alibi_on_x=use_alibi_x,
                                        alibi_on_y=use_alibi_y)
@@ -506,9 +427,8 @@ class Myna(nn.Module):
         self.linear_head = nn.Linear(d_model, latent_space)
 
     def forward(self, img, mask=None):
-        device = img.device
-
         B, _, H, W = img.shape
+        device = img.device
 
         x = self.to_patch_embedding(img)
 
@@ -520,16 +440,18 @@ class Myna(nn.Module):
         x += self.pos_embedding(x)
 
         if self.needs_coordinates:
-            coordinates = self.get_patch_coordinates(H, W).expand(B, -1, -1).to(device)
+            coordinates = self.patch_coordinates.expand(B, -1, -1)
         else:
             coordinates = None
 
         if self.mask_ratio > 0.0:
             unmasked = self.mask_inputs(x, mask, self.mask_ratio, device)
             x = x.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, x.size(-1)))
-            mask = mask.gather(1, unmasked)
+            if mask is not None:
+                mask = mask.gather(1, unmasked)
 
             if self.needs_coordinates:
+                coordinates = self.patch_coordinates.unsqueeze(0).repeat(B, 1, 1)
                 coordinates = coordinates.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, 2))
 
         B, P, F = x.shape
@@ -538,16 +460,8 @@ class Myna(nn.Module):
             cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b=B)
             x = torch.cat((cls_tokens, x), dim=1)
 
-            # if self.needs_coordinates:
-            #     cls_coord = torch.zeros(
-            #         (B, 1, 2),
-            #         device=device,
-            #         dtype=coordinates.dtype
-            #     )
-            #     coordinates = torch.cat((cls_coord, coordinates), dim=1)
-
             if mask is not None:
-                cls_mask = torch.ones((B, 1), dtype=torch.bool, device=device)
+                cls_mask = torch.ones((B, 1), dtype=torch.bool)
                 mask = torch.cat((cls_mask, mask), dim=1)
 
         x = self.transformer(x, coords=coordinates, cls=self.cls_token is not None, mask=mask)
@@ -579,7 +493,7 @@ class Myna(nn.Module):
         # Keep the last n_keep tokens for each sample
         unmasked_indices = indices[:, n_mask:n_mask + n_keep]
 
-        return unmasked_indices
+        return unmasked_indices.to(device=device)
 
     def mask_to_patch_mask(self, mask: torch.Tensor) -> torch.Tensor:
         # (B, W)
@@ -600,9 +514,7 @@ class Myna(nn.Module):
         return patch_mask
 
 
-    def get_patch_coordinates(self, H, W, device=None):
-        num_h = H // self.patch_height
-        num_w = W // self.patch_width
+    def get_patch_coordinates(self, num_h, num_w, device=None):
 
         ys, xs = torch.meshgrid(
             torch.arange(num_h, device=device),
@@ -610,7 +522,7 @@ class Myna(nn.Module):
             indexing='ij'
         )
 
-        coords = torch.stack([ys, xs], dim=-1).reshape(-1, 2)
+        coords = torch.stack([ys, xs], dim=-1).reshape(-1, 2).to(device=device)
         return coords
 
     def make_embedding_projection(self, patch_height, patch_width, patch_dim, dim):

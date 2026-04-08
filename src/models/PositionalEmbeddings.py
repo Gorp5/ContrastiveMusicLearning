@@ -107,9 +107,9 @@ class AttentionClamping(nn.Module):
 
 
 class Alibi2DBias(nn.Module):
-    def __init__(self, num_heads, alibi_on_x=False, alibi_on_y=False, clamping=None, learned_alibi_slopes=False):
+    def __init__(self, num_heads, alibi_on_x=False, alibi_on_y=False, clamping=None, learned_alibi_slopes=False, num_patches=128, device="cuda"):
         super().__init__()
-        slopes = -get_alibi_slopes(num_heads).to(device='cuda')
+        slopes = -get_alibi_slopes(num_heads).to(device=device)
         self.register_buffer("slopes", slopes)
 
         self.alibi_on_x = alibi_on_x
@@ -121,29 +121,60 @@ class Alibi2DBias(nn.Module):
         if self.clamping:
             self.clamper = clamping
 
+        if self.learned_alibi_slopes:
+            self.left_slopes = nn.Parameter(torch.ones(num_heads) * 0.5)
+            self.right_slopes = nn.Parameter(torch.ones(num_heads) * 0.5)
+            indices = torch.arange(num_patches, device=device)
+
+            self.left_mask = (indices.unsqueeze(0) <= indices.unsqueeze(1)).float()  # (N, N)
+            self.right_mask = 1.0 - self.left_mask
+
     def forward(self, coords):
         B, N, _ = coords.shape
         x, y = coords[..., 0].float(), coords[..., 1].float()
 
-        dist = torch.zeros_like(x[:, :, None], device=x.device)
+        dist = torch.zeros(B, N, N, device=x.device)
 
-        if hasattr(self, "alibi_on_x") and self.alibi_on_x:
+        if self.alibi_on_x and self.alibi_on_y:
+            dx = (x[:, :, None] - x[:, None, :])
+            dy = (y[:, :, None] - y[:, None, :])
+
+            dt = torch.sqrt(dx ** 2 + dy ** 2 + 1e-6)
+            dist += dt
+
+        elif self.alibi_on_x:
             dx = (x[:, :, None] - x[:, None, :]).abs()
             dist += dx
 
-        if hasattr(self, "alibi_on_y") and self.alibi_on_y:
+        elif self.alibi_on_y:
             dy = (y[:, :, None] - y[:, None, :]).abs()
             dist += dy
 
-        if hasattr(self, "clamping") and self.clamping:
+        if self.clamping:
             dist = self.clamper(dist)
 
         if self.learned_alibi_slopes:
-            pass
+            # Create directional mask based on current sequence length N
+            indices = torch.arange(N, device=dist.device)
+            left_mask = (indices.unsqueeze(0) <= indices.unsqueeze(1)).float()  # [N, N]
+            right_mask = 1.0 - left_mask
 
-        slopes = self.slopes.to(coords.device)
-        dist = dist.unsqueeze(1).expand(-1, slopes.numel(), -1, -1)
-        bias = dist
+            # [B, 1, N, N]
+            dist = dist.unsqueeze(1)
+
+            left_slopes = self.left_slopes.view(1, -1, 1, 1).to(dist.device)
+            right_slopes = self.right_slopes.view(1, -1, 1, 1).to(dist.device)
+
+            # Broadcast masks to [1, 1, N, N] and apply
+            directional_slopes = (left_slopes * left_mask.unsqueeze(0).unsqueeze(0) +
+                                  right_slopes * right_mask.unsqueeze(0).unsqueeze(0))
+
+            bias = dist * directional_slopes
+
+        else:
+            slopes = self.slopes.to(coords.device)
+            # [B, num_heads, N, N]
+            bias = dist.unsqueeze(1).expand(-1, slopes.numel(), -1, -1)
 
         return bias
 

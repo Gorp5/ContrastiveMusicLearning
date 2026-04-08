@@ -6,7 +6,7 @@ import os
 import torch
 import numpy as np
 
-from data.processing import chunk_data, ReadStats, chunk_data_pad
+from data.processing import chunk_data, ReadStats, chunk_data_pad, chunk_with_remainder
 from mtgjamendodataset.scripts import commons
 from tqdm import tqdm
 
@@ -16,7 +16,7 @@ def process_song(song_path, chunking=True):
 
 
 def save_pair(latent, label, dataset_name, averaging, chunking, index, name):
-    directory = f"D:\\SongsDataset\\{dataset_name}\\latent_datasets\\{name}\\"
+    directory = f"E:\\SongsDataset\\{dataset_name}\\latent_datasets\\{name}\\"
     directory += "full-set\\"
 
     os.makedirs(os.path.dirname(directory), exist_ok=True)
@@ -40,13 +40,14 @@ def save_pair(latent, label, dataset_name, averaging, chunking, index, name):
     return index
 
 
-def get_and_save_latents(dataloader, model, dataset_name, name, chunking=True, averaging=False, chunk_size=256, patch_size=16):
+def get_and_save_latents(dataloader, model, dataset_name, name, chunking=True, averaging=False, chunk_size=256, patch_size=16, use_tqdm=True):
     model.to("cuda")
     index = 0
     with torch.no_grad():
-        for label, data in tqdm(dataloader):
+        iterat = tqdm(dataloader) if use_tqdm else dataloader
+        for label, data in iterat:
 
-            directory = f"D:\\SongsDataset\\{dataset_name}\\latent_datasets\\{name}\\"
+            directory = f"E:\\SongsDataset\\{dataset_name}\\latent_datasets\\{name}\\"
             directory += "full-set\\"
 
             if chunking:
@@ -55,7 +56,9 @@ def get_and_save_latents(dataloader, model, dataset_name, name, chunking=True, a
 
                 data, num_chunks = chunk_data(data, chunk_size=chunk_size)
             else:
-                data = torch.tensor(data)
+                if len(data.shape) == 2:
+                    data = data.unsqueeze(0)
+
                 length = data.size(2)
                 truncated_length = length - length % patch_size
                 data = data[:, :, :truncated_length]
@@ -147,7 +150,6 @@ def inference_on_directory(subset_file_name, directory_to_parse, config, model, 
         df.loc[len(df)] = row
     return df
 
-
 def load_and_parse_audio(full_path, convert=True, chunking=True, chunk_size=256, multiple_factor=16):
     if not convert:
         data = np.load(full_path)
@@ -168,13 +170,13 @@ def load_and_parse_audio(full_path, convert=True, chunking=True, chunk_size=256,
     if not chunking:
         chunk_size = data.shape[1]
 
-    chunked_data, num_chunks = chunk_data(data, chunk_size=chunk_size)
+    chunked_data, remainder = chunk_with_remainder(data, chunk_size=chunk_size)
 
     if not chunking:
         length = chunked_data.shape[2]
         chunked_data = chunked_data[:,:,:length - (length % multiple_factor)]
 
-    return chunked_data
+    return chunked_data, remainder
 
 
 def make_inference(model, input, config, labels=None):
