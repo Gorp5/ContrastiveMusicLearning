@@ -13,9 +13,6 @@ from data.data_utils import StreamViewDataset, MemmapDataset
 from info_nce import InfoNCE
 from torch import optim
 
-import warnings
-warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
-
 # ---------------------------
 # Distributed helpers
 # ---------------------------
