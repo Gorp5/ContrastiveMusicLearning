@@ -191,8 +191,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_gpus", type=int, default=torch.cuda.device_count())
 
     parser.add_argument("--id", type=int, default=0)
-    parser.add_argument("--train_data_dir", required=True, type=int)
-    parser.add_argument("--save_dir", required=True, type=int)
+    parser.add_argument("--train_data_dir", required=True, type=str)
+    parser.add_argument("--save_dir", required=True, type=str)
     parser.add_argument("--lr", required=False, type=float, default=1e-4)
     parser.add_argument("--weight_decay", required=False, type=float, default=1e-4)
 
