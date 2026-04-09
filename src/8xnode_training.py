@@ -13,6 +13,9 @@ from data.data_utils import StreamViewDataset, MemmapDataset
 from info_nce import InfoNCE
 from torch import optim
 
+import warnings
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
+
 # ---------------------------
 # Distributed helpers
 # ---------------------------
@@ -146,27 +149,45 @@ def gpu_worker(rank, world_size, args, model_params_list):
             for stream in streams:
                 stream.synchronize()
 
-        # Save checkpoints
+        # Save checkpoints locally (per epoch, per process)
         for i, model in enumerate(models):
             model_name = f"Model-{rank}-{i}"
             local_path = os.path.join(save_dir, f"{model_name}-Epoch{epoch}.pt")
+
             torch.save({
                 "epoch": epoch,
-                "model": model,
+                "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizers[i].state_dict(),
                 "loss": epoch_losses[i] / len(dataloader)
             }, local_path)
 
-            # upload to GCS
-            upload_to_gcs(local_path, bucket_name="gs://mtg-jamendo",
-                          blob_name=f"checkpoints/{model_name}-Epoch{epoch}.pt")
+        # Save losses locally (per process)
+        local_losses = os.path.join(save_dir, f"Losses_rank{rank}.pkl")
+        with open(local_losses, "wb") as f:
+            pickle.dump(epoch_losses, f)
 
-        # Save epoch losses globally
-        if is_main_process(rank):
-            local_losses = os.path.join(save_dir, "Losses.pkl")
-            with open(local_losses, "wb") as f:
-                pickle.dump(epoch_losses, f)
-            upload_to_gcs(local_losses, bucket_name="gs://mtg-jamendo", blob_name="Losses.pkl")
+    # =========================
+    # Upload everything to GCS
+    # =========================
+    if rank == 0:
+        print("Uploading checkpoints and losses to GCS...")
+
+        for root, _, files in os.walk(args.save_dir):
+            for file in files:
+                local_path = os.path.join(root, file)
+
+                # Preserve folder structure in bucket
+                rel_path = os.path.relpath(local_path, args.save_dir)
+                blob_name = f"checkpoints/{rel_path}"
+
+                try:
+                    upload_to_gcs(
+                        local_path,
+                        bucket_name="mtg-jamendo",
+                        blob_name=blob_name
+                    )
+                except Exception as e:
+                    print(f"Failed to upload {local_path}: {e}")
 
     cleanup()
 
