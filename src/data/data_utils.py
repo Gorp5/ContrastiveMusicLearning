@@ -74,7 +74,7 @@ class StreamViewDataset(Dataset):
 
         return track_id, torch.stack(views), torch.stack(masks)
 
-class MemmapDataset:
+class MemmsapDataset:
     """
     Dataset for sharded memmap spectrogram storage.
     Each sample is retrieved via (file_id, start, length).
