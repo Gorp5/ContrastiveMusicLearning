@@ -60,7 +60,7 @@ def build_model(mask_ratio, chunk_length, embedding_params):
     return model
 
 def build_dataloader(dataset_path, batch_size, rank, world_size, chunk_length):
-    dataset = StreamViewDataset(dataset_path, split="train", views=2, chunk_size=chunk_length, num_shards=2)
+    dataset = StreamViewDataset(dataset_path, split="test", views=2, chunk_size=chunk_length, num_shards=2)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(
         dataset,
