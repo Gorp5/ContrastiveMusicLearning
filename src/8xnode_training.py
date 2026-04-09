@@ -9,7 +9,7 @@ from tqdm import tqdm
 import pickle
 from google.cloud import storage
 from models.Myna import Myna
-from data.data_utils import StreamViewDataset, MemmsapDataset
+from data.data_utils import StreamViewDataset, MemmapDataset
 from info_nce import InfoNCE
 from torch import optim
 
@@ -60,7 +60,7 @@ def build_model(mask_ratio, chunk_length, embedding_params):
     return model
 
 def build_dataloader(dataset_path, batch_size, rank, world_size, chunk_length):
-    dataset = MemmsapDataset(dataset_path, split="test", views=2, chunk_size=chunk_length)
+    dataset = MemmapDataset(dataset_path, split="test", views=2, chunk_size=chunk_length)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(
         dataset,
