@@ -189,6 +189,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, required=False, default=16)
     parser.add_argument("--chunk_length", type=int, required=True)
     parser.add_argument("--num_gpus", type=int, default=torch.cuda.device_count())
+    parser.add_argument("--num_models", required=True, type=int, default=1)
 
     parser.add_argument("--id", type=int, default=0)
     parser.add_argument("--train_data_dir", required=True, type=str)
