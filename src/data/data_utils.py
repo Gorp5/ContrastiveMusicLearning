@@ -74,10 +74,10 @@ class StreamViewDataset(Dataset):
 
         return track_id, torch.stack(views), torch.stack(masks)
 
-class MemmsapDataset:
+class MemmapDataset:
     """
     Dataset for sharded memmap spectrogram storage.
-    Each sample is retrieved via (file_id, start, length).
+    Works with unified index.npy + .bin shard files.
     """
 
     def __init__(
@@ -89,7 +89,7 @@ class MemmsapDataset:
         min_chunk=-1,
         max_chunk=-1,
         dtype=np.float16,
-        freq_bins=128,   # must match conversion
+        freq_bins=128,
     ):
         self.memmap_root = memmap_root
         self.split = split
@@ -101,10 +101,13 @@ class MemmsapDataset:
         self.freq_bins = freq_bins
 
         # ---------------------------
-        # Load index
+        # Load FULL index, then filter
         # ---------------------------
-        index_path = os.path.join(memmap_root, f"{split}_index.npy")
-        self.index = np.load(index_path)
+        index_path = os.path.join(memmap_root, "index.npy")
+        full_index = np.load(index_path)
+
+        # FILTER BY SPLIT (CRITICAL)
+        self.index = full_index[full_index["split"] == split]
 
         self.track_ids = self.index["track_id"]
 
@@ -117,18 +120,12 @@ class MemmsapDataset:
         return len(self.index)
 
     def _get_memmap(self, file_id):
-        """
-        Lazily open memmap shard.
-        Each worker will have its own cache.
-        """
         if file_id not in self.memmaps:
             path = os.path.join(
                 self.memmap_root,
-                f"{self.split}_{file_id}.memmap"
+                f"{self.split}_{file_id}.bin"   # FIXED
             )
 
-            # IMPORTANT: shape must match conversion
-            # We don't know total rows, so use mode='r' and reshape via -1
             mm = np.memmap(
                 path,
                 dtype=self.dtype,
@@ -154,8 +151,7 @@ class MemmsapDataset:
         mm = self._get_memmap(file_id)
         spec = mm[start:start + length]  # (time, freq)
 
-        # convert to torch (still cheap)
-        spec = torch.from_numpy(spec).float().T  # → (freq, time)
+        spec = torch.from_numpy(spec).float().T  # (freq, time)
 
         # ---------------------------
         # Generate views
@@ -183,7 +179,6 @@ class MemmsapDataset:
                 start_idx = random.randint(0, spec.shape[1] - size)
                 view = spec[:, start_idx:start_idx + size]
                 mask = torch.ones(size, dtype=torch.bool)
-
 
             views.append(view)
             masks.append(mask)
