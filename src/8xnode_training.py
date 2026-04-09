@@ -13,6 +13,9 @@ from data.data_utils import StreamViewDataset, MemmapDataset
 from info_nce import InfoNCE
 from torch import optim
 
+import warnings
+warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
+
 # ---------------------------
 # Distributed helpers
 # ---------------------------
@@ -94,7 +97,7 @@ def gpu_worker(rank, world_size, args, model_params_list):
     streams = []
     for params in model_params_list[rank]:
         model = build_model(params["mask_ratio"], params["chunk_length"], params["embedding_params"]).to(device)
-        ddp_model = DDP(model, device_ids=[rank], output_device=rank, find_unused_parameters=False)
+        ddp_model = DDP(model, device_ids=[rank], output_device=rank, find_unused_parameters=True)
         optimizer = optim.AdamW(ddp_model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         stream = torch.cuda.Stream(device=device)
 
@@ -126,34 +129,25 @@ def gpu_worker(rank, world_size, args, model_params_list):
             inputs = inputs.to(device)
 
             # Step 1: record forward/backward in separate streams
-            handles = []
-            for i, (ddp_model, optimizer, stream) in enumerate(zip(ddp_models, optimizers, streams)):
-                handle = torch.cuda.StreamContext(stream)
-                with torch.cuda.stream(stream):
-                    optimizer.zero_grad(set_to_none=True)
-                    stacked = inputs.view(B*2, T, F).unsqueeze(1)
-                    z_list = ddp_model(stacked, mask=None).squeeze(1).view(B, 2, -1)
-                    loss = 0.0
-                    for idx in range(1, len(z_list)):
-                        loss += criterion(z_list[0], z_list[idx])
-                    loss /= (len(z_list)-1)
-                    loss.backward()
-                    optimizer.step()
-                    epoch_losses[i] += loss.detach().item()
+            for i, (ddp_model, optimizer) in enumerate(zip(ddp_models, optimizers)):
+                optimizer.zero_grad(set_to_none=True)
+
+                stacked = inputs.view(B * 2, T, F).unsqueeze(1)
+                z_list = ddp_model(stacked, mask=None).squeeze(1).view(B, 2, -1)
+
+                loss = 0.0
+                for idx in range(1, len(z_list)):
+                    loss += criterion(z_list[0], z_list[idx])
+                loss /= (len(z_list) - 1)
+
+                loss.backward()
+                optimizer.step()
+
+                epoch_losses[i] += loss.item()
 
             # Step 2: synchronize all streams before next batch
             for stream in streams:
                 stream.synchronize()
-
-        # Save checkpoints
-        for i, model in enumerate(models):
-            model_name = f"Model-{rank}-{i}"
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizers[i].state_dict(),
-                "loss": epoch_losses[i]/len(dataloader)
-            }, os.path.join(save_dir, f"{model_name}-Epoch{epoch}.pt"))
 
         # Save checkpoints
         for i, model in enumerate(models):
