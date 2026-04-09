@@ -58,8 +58,6 @@ class StreamViewDataset(Dataset):
         views, masks = [], []
         for _ in range(self.view_count):
             size = self.chunk_size
-            if self.stochastic:
-                size = random.randint(self.min_chunk // 16, self.max_chunk // 16) * 16
 
             if spec.shape[1] <= size:
                 # Pad if too short
