@@ -193,36 +193,40 @@ def gpu_worker(rank, world_size, args, model_params_list):
     cleanup()
 
 
-masking_ratios = [0.25, 0.5, 0.75, 0.9]
-training_chunk_lengths = [128, 256, 512, 1024, 2048]
-embedding_strategy = ["alibi_2d_learned", "rope_2d", "alibi_2d", "alibi_1d", "rope_1d", "sinusoidal_raster", "learned_x", "none", "sinusoidal_xy"]
 
-BASE_CONFIG = dict(
-    alibi_x=False,
-    alibi_y=False,
-    alibi_learned_slopes=False,
-    rope_x=False,
-    rope_y=False,
-    sinusoidal_raster=False,
-    sinusoidal_x=False,
-    sinusoidal_y=False,
-    learned_x=False,
-    learned_y=False,
-)
 
-embedding_configs = [
-    dict(name="alibi_2d_learned", alibi_x=True, alibi_y=True, alibi_learned_slopes=True),
-    dict(name="alibi_2d", alibi_x=True, alibi_y=True),
-    dict(name="rope_2d", rope_x=True, rope_y=True),
-    dict(name="alibi_1d",         alibi_x=True),
-    dict(name="rope_1d",          rope_x=True),
-    dict(name="sinusoidal_raster", sinusoidal_raster=True),
-    dict(name="learned_x",        learned_x=True, learned_y=True),
-    dict(name="none"),
-    dict(name="sinusoidal_xy",    sinusoidal_x=True, sinusoidal_y=True),
-    dict(name="rope_double_frequency", rope_x=True, rope_y=True),
-]
 def determine_based_on_id(id):
+    masking_ratio_array = [0.25, 0.5, 0.75, 0.9]
+    training_chunk_length_array = [128, 256, 512, 1024, 2048]
+    embedding_strategy = ["alibi_2d_learned", "rope_2d", "alibi_2d", "alibi_1d", "rope_1d", "sinusoidal_raster",
+                          "learned_x", "none", "sinusoidal_xy"]
+
+    BASE_CONFIG = dict(
+        alibi_x=False,
+        alibi_y=False,
+        alibi_learned_slopes=False,
+        rope_x=False,
+        rope_y=False,
+        sinusoidal_raster=False,
+        sinusoidal_x=False,
+        sinusoidal_y=False,
+        learned_x=False,
+        learned_y=False,
+    )
+
+    embedding_configs = [
+        dict(name="alibi_2d_learned", alibi_x=True, alibi_y=True, alibi_learned_slopes=True),
+        dict(name="alibi_2d", alibi_x=True, alibi_y=True),
+        dict(name="rope_2d", rope_x=True, rope_y=True),
+        dict(name="alibi_1d", alibi_x=True),
+        dict(name="rope_1d", rope_x=True),
+        dict(name="sinusoidal_raster", sinusoidal_raster=True),
+        dict(name="learned_x", learned_x=True, learned_y=True),
+        dict(name="none"),
+        dict(name="sinusoidal_xy", sinusoidal_x=True, sinusoidal_y=True),
+        dict(name="rope_double_frequency", rope_x=True, rope_y=True),
+    ]
+
     masking_ratio_index = id % 4
     training_length_index = (id // 4) % 5
     type_index = (id // 20) % 10
@@ -230,7 +234,7 @@ def determine_based_on_id(id):
     config = BASE_CONFIG.copy()
     config.update(embedding_configs[type_index])
 
-    return masking_ratios[masking_ratio_index], training_chunk_lengths[training_length_index], config
+    return masking_ratio_array[masking_ratio_index], training_chunk_length_array[training_length_index], config
 
 
 # ---------------------------
