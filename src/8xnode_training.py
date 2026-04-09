@@ -15,6 +15,7 @@ from torch import optim
 
 import warnings
 warnings.filterwarnings("ignore", message="The given NumPy array is not writable")
+warnings.filterwarnings("ignore", message="You are using a Python version (3.10.12) which Google will stop supporting in new releases of google.api_core once it reaches its end of life (2026-10-04). Please upgrade to the latest Python version, or at least Python 3.11, to continue receiving updates for google.api_core past that date")
 
 # ---------------------------
 # Distributed helpers
@@ -152,7 +153,7 @@ def gpu_worker(rank, world_size, args, model_params_list):
         # Save checkpoints locally (per epoch, per process)
         for i, model in enumerate(models):
             model_name = f"Model-{rank}-{i}"
-            local_path = os.path.join(save_dir, f"{model_name}-Epoch{epoch}.pt")
+            local_path = os.path.join(save_dir, f"{model_name}.pt")
 
             torch.save({
                 "epoch": epoch,
@@ -192,6 +193,46 @@ def gpu_worker(rank, world_size, args, model_params_list):
     cleanup()
 
 
+masking_ratios = [0.25, 0.5, 0.75, 0.9]
+training_chunk_lengths = [128, 256, 512, 1024, 2048]
+embedding_strategy = ["alibi_2d_learned", "rope_2d", "alibi_2d", "alibi_1d", "rope_1d", "sinusoidal_raster", "learned_x", "none", "sinusoidal_xy"]
+
+BASE_CONFIG = dict(
+    alibi_x=False,
+    alibi_y=False,
+    alibi_learned_slopes=False,
+    rope_x=False,
+    rope_y=False,
+    sinusoidal_raster=False,
+    sinusoidal_x=False,
+    sinusoidal_y=False,
+    learned_x=False,
+    learned_y=False,
+)
+
+embedding_configs = [
+    dict(name="alibi_2d_learned", alibi_x=True, alibi_y=True, alibi_learned_slopes=True),
+    dict(name="alibi_2d", alibi_x=True, alibi_y=True),
+    dict(name="rope_2d", rope_x=True, rope_y=True),
+    dict(name="alibi_1d",         alibi_x=True),
+    dict(name="rope_1d",          rope_x=True),
+    dict(name="sinusoidal_raster", sinusoidal_raster=True),
+    dict(name="learned_x",        learned_x=True, learned_y=True),
+    dict(name="none"),
+    dict(name="sinusoidal_xy",    sinusoidal_x=True, sinusoidal_y=True),
+    dict(name="rope_double_frequency", rope_x=True, rope_y=True),
+]
+def determine_based_on_id(id):
+    masking_ratio_index = id % 4
+    training_length_index = (id // 4) % 5
+    type_index = (id // 20) % 10
+
+    config = BASE_CONFIG.copy()
+    config.update(embedding_configs[type_index])
+
+    return masking_ratios[masking_ratio_index], training_chunk_lengths[training_length_index], config
+
+
 # ---------------------------
 # Main
 # ---------------------------
@@ -217,10 +258,11 @@ if __name__ == "__main__":
     models_per_gpu = [[] for _ in range(args.num_gpus)]
     for i in range(args.num_models):
         gpu_id = i % args.num_gpus
+        mask_ratio, training_chunk_lengths, params = determine_based_on_id(i)
         models_per_gpu[gpu_id].append({
-            "mask_ratio": 0.9,
-            "chunk_length": args.chunk_length,
-            "embedding_params": {}
+            "mask_ratio": mask_ratio,
+            "chunk_length": training_chunk_lengths,
+            "embedding_params": params
         })
 
     mp.spawn(gpu_worker, args=(args.num_gpus, args, models_per_gpu), nprocs=args.num_gpus, join=True)
