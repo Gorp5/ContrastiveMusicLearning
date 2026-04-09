@@ -10,14 +10,12 @@ from torch.utils.data import Dataset
 
 class StreamViewDataset(Dataset):
     def __init__(self, lmdb_root, split="train", num_shards=4,
-                 chunk_size=256, views=2, min_chunk=-1, max_chunk=-1):
+                 chunk_size=256, views=2):
         self.lmdb_root = lmdb_root
         self.split = split
         self.num_shards = num_shards
         self.chunk_size = chunk_size
         self.view_count = views
-        self.stochastic = min_chunk > 0 and max_chunk > 0
-        self.min_chunk, self.max_chunk = min_chunk, max_chunk
 
         # Load IDs instantly from numpy file (no LMDB scanning!)
         id_file = os.path.join(lmdb_root, f"{split}_ids.npy")
@@ -72,11 +70,6 @@ class StreamViewDataset(Dataset):
                 start = random.randint(0, spec.shape[1] - size)
                 view = spec[:, start:start + size]
                 mask = torch.ones(size, dtype=torch.bool)
-
-                if self.stochastic:
-                    pad = self.max_chunk - size
-                    view = torch.nn.functional.pad(view, (0, pad))
-                    mask = torch.cat([mask, torch.zeros(pad)]).bool()
 
             views.append(view)
             masks.append(mask)

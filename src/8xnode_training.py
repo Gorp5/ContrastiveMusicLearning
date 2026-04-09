@@ -9,9 +9,8 @@ from tqdm import tqdm
 import pickle
 from google.cloud import storage
 from models.Myna import Myna
-from data.data_utils import MemmapDataset
+from data.data_utils import StreamViewDataset
 from info_nce import InfoNCE
-from utils.Config import Config
 from torch import optim
 
 # ---------------------------
@@ -61,7 +60,7 @@ def build_model(mask_ratio, chunk_length, embedding_params):
     return model
 
 def build_dataloader(dataset_path, batch_size, rank, world_size, chunk_length):
-    dataset = MemmapDataset(dataset_path, split="train", views=2, chunk_size=chunk_length)
+    dataset = StreamViewDataset(dataset_path, split="train", views=2, chunk_size=chunk_length, num_shards=2)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(
         dataset,
@@ -186,13 +185,9 @@ def gpu_worker(rank, world_size, args, model_params_list):
 # ---------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train_data_dir", type=str, required=True)
-    parser.add_argument("--save_dir", type=str, required=True)
-    parser.add_argument("--batch_size", type=int, required=True)
-    parser.add_argument("--epochs", type=int, required=True)
+    parser.add_argument("--batch_size", type=int, required=False, default=512)
+    parser.add_argument("--epochs", type=int, required=False, default=16)
     parser.add_argument("--chunk_length", type=int, required=True)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--num_models", type=int, required=True)
     parser.add_argument("--num_gpus", type=int, default=torch.cuda.device_count())
 
