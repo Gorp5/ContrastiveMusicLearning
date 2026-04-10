@@ -261,6 +261,7 @@ if __name__ == "__main__":
     # ---------------------------
     models_per_gpu = [[] for _ in range(args.num_gpus)]
     for i in range(args.num_models):
+        i = i + args.id
         gpu_id = i % args.num_gpus
         mask_ratio, training_chunk_lengths, params = determine_based_on_id(i)
         models_per_gpu[gpu_id].append({

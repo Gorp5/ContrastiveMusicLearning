@@ -6,17 +6,18 @@ set -e
 # ===============================
 GCS_BUCKET="gs://mtg-jamendo"
 BATCH_SIZE=512
-EPOCHS=64
-ABLATION_ID=0
+EPOCHS=128
+ABLATION_ID=$1
 DATASET="/home/pordanjhillips/dataset"
-DATASET="/home/pordanjhillips/output"
+OUTPUT="/home/pordanjhillips/output"
+
 # Cache dataset locally
 mkdir -p /dataset
 echo "Caching dataset locally..."
 
 if [ ! -d "$DATASET" ] || [ -z "$(ls -A "$DATASET")" ]; then
   echo "Caching dataset..."
-  gsutil -m cp -r ${GCS_BUCKET}/train_*.bin ${DATASET}
+  gsutil -m cp -r ${GCS_BUCKET}/test_*.bin ${DATASET}
   gsutil -m cp -r ${GCS_BUCKET}/index.npy ${DATASET}
 
 else
@@ -27,7 +28,7 @@ fi
 echo "Starting training for ablation $ABLATION_ID..."
 python3 ContrastiveMusicLearning/src/8xnode_training.py \
     --id $ABLATION_ID \
-    --num_models 2 \
+    --num_models 16 \
     --save_dir ${OUTPUT} \
     --train_data_dir ${DATASET} \
     --chunk_length 256 \
