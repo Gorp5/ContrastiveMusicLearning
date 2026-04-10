@@ -59,11 +59,11 @@ def build_dataloader(dataset_path, batch_size, chunk_length):
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=8,
         pin_memory=True,
         drop_last=True,
-        # persistent_workers=True,
-        # prefetch_factor=4
+        persistent_workers=True,
+        prefetch_factor=4
     )
 
 
@@ -222,7 +222,7 @@ if __name__ == "__main__":
         })
 
     processes = []
-    gpu_worker(0, args, models_per_gpu)
+
     for gpu_id in range(args.num_gpus):
         p = mp.Process(
             target=gpu_worker,
