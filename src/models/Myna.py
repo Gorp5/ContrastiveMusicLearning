@@ -2,6 +2,7 @@
 Modified from the myna repository https://github.com/ghost-signal/myna
 '''
 
+from torch.utils.checkpoint import checkpoint
 from models.PositionalEmbeddings import *
 from torch import nn
 import matplotlib.pyplot as plt
@@ -181,7 +182,7 @@ class Attention(nn.Module):
             dropout_p=0.0,
             is_causal=False
         )
-        
+
         out = rearrange(out, 'b h n d -> b n (h d)')
 
         return self.to_out(out)
@@ -225,7 +226,12 @@ class Transformer(nn.Module):
         full[:, :, 1:, 1:] = alibi_bias_2d
         return full
 
-    def forward(self, x, coords=None, cls=True, mask=None):
+    def _layer_forward(self, x, attn, ff, alibi_bias, coords, mask):
+        x = attn(x, alibi_bias, coords, mask) + x
+        x = ff(x) + x
+        return x
+
+    def forward(self, x, coords=None, cls=True, mask=None, checkpointing=False):
         if self.alibi_2d is not None:
             alibi_bias = self.alibi_2d(coords)
             alibi_bias = self.compute_alibi_with_cls(alibi_bias, has_cls=cls)
@@ -233,8 +239,26 @@ class Transformer(nn.Module):
             alibi_bias = None
 
         for attn, ff in self.layers:
-            x = attn(x, alibi_bias, coords, mask) + x
-            x = ff(x) + x
+            if checkpointing:
+                x = checkpoint(
+                    self._layer_forward,
+                    x,
+                    attn,
+                    ff,
+                    alibi_bias,
+                    coords,
+                    mask,
+                    use_reentrant=False
+                )
+            else:
+                x = self._layer_forward(
+                    x,
+                    attn,
+                    ff,
+                    alibi_bias,
+                    coords,
+                    mask
+                )
 
         return self.norm(x)
 
@@ -423,7 +447,7 @@ class Myna(nn.Module):
         self.to_cord = Rearrange("b (h w) f -> b h w f", w=self.num_patches_x, h=self.num_patches_y)
         self.from_cord = Rearrange("b h w f -> b (h w) f", w=self.num_patches_x, h=self.num_patches_y)
 
-    def forward(self, img, mask=None):
+    def forward(self, img, mask=None, checkpointing=False):
         B, _, H, W = img.shape
         device = img.device
 
@@ -462,7 +486,7 @@ class Myna(nn.Module):
                 cls_mask = torch.ones((B, 1), dtype=torch.bool, device=device)
                 mask = torch.cat((cls_mask, mask), dim=1)
 
-        x = self.transformer(x, coords=coordinates, cls=self.cls_token is not None, mask=mask)
+        x = self.transformer(x, coords=coordinates, cls=self.cls_token is not None, mask=mask, checkpointing=checkpointing)
 
         if self.cls_token is not None:
             x = x[:, 0]

@@ -127,9 +127,12 @@ def gpu_worker(gpu_id, args, model_params_list):
 
                 # Flatten views
                 stacked = sliced.view(B * 2, T, F).unsqueeze(1)
+                big_length = chunk_len > 257
+                low_masking = params["chunk_length"] < 0.5
+                do_checkpoints = big_length and low_masking
 
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                    z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
+                    z = model(stacked, mask=None, checkpointing=do_checkpoints).squeeze(1).view(B, 2, -1)
 
                 optimizer.zero_grad(set_to_none=True)
 
@@ -156,7 +159,7 @@ def gpu_worker(gpu_id, args, model_params_list):
 # ---------------------------
 def determine_based_on_id(id):
     masking_ratio_array = [0.25, 0.5, 0.75, 0.9]
-    training_chunk_length_array = [128, 256, 512, 1024]
+    training_chunk_length_array = [128, 256, 512, 1024, 2048]
 
     embedding_configs = [
         dict(name="alibi_2d_learned", alibi_x=True, alibi_y=True, alibi_learned_slopes=True),

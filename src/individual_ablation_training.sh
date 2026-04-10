@@ -36,4 +36,4 @@ python3 ContrastiveMusicLearning/src/individual_ablation_training.py \
     --epochs ${EPOCHS}
 
 # Shutdown VM
-shutdown -h now
+#shutdown -h now
