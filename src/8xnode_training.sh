@@ -4,7 +4,7 @@ set -e
 # ===============================
 # CONFIGURATION
 # ===============================
-GCS_BUCKET="gs://mtg-jamendo"
+GCS_BUCKET="gs://mtg-jamendo/SongsDataset"
 BATCH_SIZE=512
 EPOCHS=128
 ABLATION_ID=$1
@@ -16,7 +16,7 @@ echo "Caching dataset locally..."
 
 if [ ! -d "$DATASET" ] || [ -z "$(ls -A "$DATASET")" ]; then
   echo "Caching dataset..."
-  gsutil -m cp -r ${GCS_BUCKET}/test_*.bin ${DATASET}
+  gsutil -m cp -r ${GCS_BUCKET}/train*.bin ${DATASET}
   gsutil -m cp -r ${GCS_BUCKET}/index.npy ${DATASET}
 
 else
