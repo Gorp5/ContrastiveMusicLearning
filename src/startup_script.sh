@@ -36,6 +36,13 @@ pip install -r ContrastiveMusicLearning/src/requirements.txt
 # Run training script
 bash ContrastiveMusicLearning/src/individual_ablation_training.sh $ID_BASE
 
-OUTPUT="/home/pordanjhillips/output/"
-GCS_BUCKET="gs://mtg-jamendo/SongsDataset/models/"
-gsutil -m cp -r ${OUTPUT}/${$ID_BASE} ${GCS_BUCKET}
+ID_BASE=$1
+OUTPUT="/home/pordanjhillips/output"
+GCS_BUCKET="gs://mtg-jamendo/SongsDataset/models"
+
+# Create archive directory and move contents
+sudo mkdir -p "${OUTPUT}-${ID_BASE}"
+sudo mv ${OUTPUT}/* "${OUTPUT}-${ID_BASE}/"
+
+# Upload to GCS
+gsutil -m cp -r "${OUTPUT}-${ID_BASE}" "${GCS_BUCKET}"
