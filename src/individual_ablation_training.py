@@ -4,13 +4,19 @@ import torch
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import pickle
 from google.cloud import storage
+from torch import optim
 
 from models.Myna import Myna
 from data.data_utils import MemmapDataset
 from info_nce import InfoNCE
-from torch import optim
+
+
+# ---------------------------
+# SPEED FIX: multiprocessing safety
+# ---------------------------
+mp.set_start_method("spawn", force=True)
+torch.multiprocessing.set_sharing_strategy("file_system")
 
 
 # ---------------------------
@@ -31,8 +37,8 @@ def build_model(mask_ratio, chunk_length, embedding_params):
         use_sinusoidal_x=embedding_params.get("sinusoidal_x", False),
         use_sinusoidal_y=embedding_params.get("sinusoidal_y", False),
         use_sinusoidal_raster=embedding_params.get("sinusoidal_raster", False),
-        use_learned_encoding_y=embedding_params.get("learned_y", False),
         use_learned_encoding_x=embedding_params.get("learned_x", False),
+        use_learned_encoding_y=embedding_params.get("learned_y", False),
         use_rope_x=embedding_params.get("rope_x", False),
         use_rope_y=embedding_params.get("rope_y", False),
         use_alibi_x=embedding_params.get("alibi_x", False),
@@ -43,7 +49,7 @@ def build_model(mask_ratio, chunk_length, embedding_params):
 
 
 # ---------------------------
-# DataLoader (NO DISTRIBUTED SAMPLER)
+# DataLoader (FAST + SAFE)
 # ---------------------------
 def build_dataloader(dataset_path, batch_size, chunk_length):
     dataset = MemmapDataset(dataset_path, split="train", views=2, chunk_size=chunk_length)
@@ -52,38 +58,27 @@ def build_dataloader(dataset_path, batch_size, chunk_length):
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
+        num_workers=2,              # 🔥 FIX: stop CPU explosion
         pin_memory=True,
-        drop_last=True
+        drop_last=True,
+        persistent_workers=True,    # 🔥 reduces worker restart overhead
+        prefetch_factor=2           # 🔥 prevents CPU starvation spikes
     )
 
 
 # ---------------------------
-# GCS upload
-# ---------------------------
-def upload_to_gcs(local_path, bucket_name, blob_name):
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
-    blob.upload_from_filename(local_path)
-
-
-# ---------------------------
-# GPU WORKER (NO DDP, NO NCCL)
+# GPU WORKER
 # ---------------------------
 def gpu_worker(gpu_id, args, model_params_list):
     print(f"[GPU {gpu_id}] worker starting")
 
-    # Each process sees ONLY its GPU
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     device = torch.device("cuda:0")
 
     torch.cuda.set_device(device)
 
-    models = []
-    optimizers = []
+    models, optimizers = [], []
 
-    # Build models assigned to this GPU
     for params in model_params_list[gpu_id]:
         model = build_model(
             params["mask_ratio"],
@@ -91,14 +86,13 @@ def gpu_worker(gpu_id, args, model_params_list):
             params["embedding_params"]
         ).to(device)
 
-        optimizer = optim.AdamW(
-            model.parameters(),
-            lr=args.lr,
-            weight_decay=args.weight_decay
+        model.train()
+
+        optimizers.append(
+            optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         )
 
         models.append(model)
-        optimizers.append(optimizer)
 
     criterion = InfoNCE()
 
@@ -112,67 +106,51 @@ def gpu_worker(gpu_id, args, model_params_list):
     os.makedirs(save_dir, exist_ok=True)
 
     # ---------------------------
-    # TRAINING LOOP
+    # TRAIN LOOP
     # ---------------------------
     for epoch in range(args.epochs):
-        epoch_losses = [0.0 for _ in models]
+        losses = [0.0 for _ in models]
 
         pbar = tqdm(dataloader, desc=f"GPU {gpu_id} Epoch {epoch}")
 
         for batch in pbar:
             _, inputs, _ = batch
-            inputs = inputs.to(device)
+            inputs = inputs.to(device, non_blocking=True)
 
             B, _, T, F = inputs.shape
+            stacked = inputs.view(B * 2, T, F).unsqueeze(1)
 
-            for i, (model, optimizer) in enumerate(zip(models, optimizers)):
+            # 🔥 FORWARD ALL MODELS FIRST (reduces CPU overhead + better GPU batching)
+            zs = []
+            for model in models:
+                with torch.cuda.amp.autocast(False):
+                    z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
+                zs.append(z)
+
+            # 🔥 BACKWARD SEPARATELY
+            for i, (z, model, optimizer) in enumerate(zip(zs, models, optimizers)):
                 optimizer.zero_grad(set_to_none=True)
 
-                stacked = inputs.view(B * 2, T, F).unsqueeze(1)
-
-                z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
-
-                loss = 0.0
-                for j in range(1, z.shape[1]):
-                    loss += criterion(z[:, 0], z[:, j])
-
-                loss = loss / (z.shape[1] - 1)
-
+                loss = criterion(z[:, 0], z[:, 1])
                 loss.backward()
                 optimizer.step()
 
-                epoch_losses[i] += loss.item()
+                losses[i] += loss.item()
 
         # ---------------------------
-        # SAVE CHECKPOINTS
+        # SAVE
         # ---------------------------
         for i, model in enumerate(models):
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizers[i].state_dict(),
-                "loss": epoch_losses[i] / len(dataloader)
+                "loss": losses[i] / len(dataloader)
             }, os.path.join(save_dir, f"model_{i}.pt"))
-
-    # ---------------------------
-    # UPLOAD (rank 0 GPU only optional, but safe to let all do it)
-    # ---------------------------
-    if gpu_id == 0:
-        print("Uploading to GCS...")
-        for root, _, files in os.walk(args.save_dir):
-            for f in files:
-                local_path = os.path.join(root, f)
-                rel_path = os.path.relpath(local_path, args.save_dir)
-
-                upload_to_gcs(
-                    local_path,
-                    bucket_name="mtg-jamendo",
-                    blob_name=f"checkpoints/{rel_path}"
-                )
 
 
 # ---------------------------
-# CONFIG MAPPING
+# CONFIG
 # ---------------------------
 def determine_based_on_id(id):
     masking_ratio_array = [0.25, 0.5, 0.75, 0.9]
@@ -201,12 +179,12 @@ def determine_based_on_id(id):
 
 
 # ---------------------------
-# MAIN SCHEDULER
+# MAIN
 # ---------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=16)
     parser.add_argument("--chunk_length", type=int, required=True)
 
@@ -222,9 +200,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # ---------------------------
-    # Assign models to GPUs
-    # ---------------------------
     models_per_gpu = [[] for _ in range(args.num_gpus)]
 
     for i in range(args.num_models):
@@ -239,9 +214,6 @@ if __name__ == "__main__":
             "embedding_params": params
         })
 
-    # ---------------------------
-    # Launch workers (NO DDP)
-    # ---------------------------
     processes = []
 
     for gpu_id in range(args.num_gpus):
