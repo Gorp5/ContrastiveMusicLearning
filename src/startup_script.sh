@@ -6,9 +6,6 @@ set -e  # exit on error
 # Argument (must pass this when running script)
 ID_BASE=$1
 
-OUTPUT="/home/pordanjhillips/output"
-GCS_BUCKET="gs://mtg-jamendo/SongsDataset/models"
-
 if [ -z "$ID_BASE" ]; then
   echo "Usage: bash setup_and_run.sh <ID_NUMBER_MULTIPLE_OF_16>"
   exit 1
@@ -39,4 +36,7 @@ pip install -r ContrastiveMusicLearning/src/requirements.txt
 # Run training script
 bash ContrastiveMusicLearning/src/individual_ablation_training.sh $ID_BASE
 
+ID_BASE=$1
+OUTPUT="/home/pordanjhillips/output"
+GCS_BUCKET="gs://mtg-jamendo/SongsDataset/models"
 gsutil -m cp -r ${OUTPUT}/${$ID_BASE} ${GCS_BUCKET}

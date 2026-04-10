@@ -10,6 +10,8 @@ from torch import optim
 from models.Myna import Myna
 from data.data_utils import MemmapDataset
 from info_nce import InfoNCE
+import subprocess
+import sys
 
 
 # ---------------------------
@@ -153,6 +155,14 @@ def gpu_worker(gpu_id, args, model_params_list):
                 "loss": losses[i] / len(dataloader)
             }, os.path.join(save_dir, f"model_{i}.pt"))
 
+    output = "/home/pordanjhillips/output"
+    gcs_bucket = "gs://mtg-jamendo/SongsDataset/models"
+
+    subprocess.run([
+        "gsutil", "-m", "cp", "-r",
+        f"{output}/{args.id}",
+        gcs_bucket
+    ])
 
 # ---------------------------
 # CONFIG
