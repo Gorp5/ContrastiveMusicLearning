@@ -122,14 +122,12 @@ def gpu_worker(gpu_id, args, model_params_list):
             B, _, T, F = inputs.shape
             stacked = inputs.view(B * 2, T, F).unsqueeze(1)
 
-            # 🔥 FORWARD ALL MODELS FIRST (reduces CPU overhead + better GPU batching)
             zs = []
             for model in models:
                 with torch.cuda.amp.autocast(False):
                     z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
                 zs.append(z)
 
-            # 🔥 BACKWARD SEPARATELY
             for i, (z, model, optimizer) in enumerate(zip(zs, models, optimizers)):
                 optimizer.zero_grad(set_to_none=True)
 
