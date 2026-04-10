@@ -497,10 +497,6 @@ class Myna(nn.Module):
             cls_tokens = repeat(self.cls_token, '1 1 d -> b 1 d', b=B)
             x = torch.cat([cls_tokens, x], dim=1)
 
-            if coordinates is not None:
-                cls_coords = torch.zeros(B, 1, 2, device=coordinates.device)
-                coordinates = torch.cat([cls_coords, coordinates], dim=1)
-
             if mask is not None:
                 cls_mask = torch.ones((B, 1), dtype=torch.bool, device=device)
                 mask = torch.cat((cls_mask, mask), dim=1)
