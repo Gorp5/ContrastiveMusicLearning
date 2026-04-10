@@ -173,21 +173,15 @@ class Attention(nn.Module):
             q = torch.cat([q_cls, q_tokens], dim=2)
             k = torch.cat([k_cls, k_tokens], dim=2)
 
-        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=alibi_bias,  # additive bias works here
+            dropout_p=0.0,
+            is_causal=False
+        )
 
-        if alibi_bias is not None:
-            dots = dots + alibi_bias
-
-        if mask is not None:
-            key_mask = mask[:, None, None, :]
-            dots = dots.masked_fill(~key_mask, -1e8)
-
-            query_mask = mask[:, None, :, None]
-            dots = dots.masked_fill(~query_mask, -1e8)
-
-        attn = self.attend(dots)
-
-        out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
 
         return self.to_out(out)
