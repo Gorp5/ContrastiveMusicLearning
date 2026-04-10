@@ -9,6 +9,7 @@ from einops.layers.torch import Rearrange
 from einops import rearrange, repeat
 import torch
 import torch.nn as nn
+import math
 
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
@@ -129,16 +130,46 @@ class Rotary2D(nn.Module):
         if coords is None:
             return q, k
 
+        B, H, N, D = q.shape
+
+        # coords: [B, H_img, W_img, 2] → [B, N, 2]
+        coords = coords.view(B, N, 2)
+
+        # expand for heads
+        coords = coords.unsqueeze(1)  # [B, 1, N, 2]
+
+        q_out, k_out = q, k
+
         for axis_name, axis_slice in self.axis_slices:
             axis_index = 0 if axis_name == "x" else 1
-            axis_coords = coords[..., axis_index]  # [B, H, W]
-            cos, sin = self._axis_cos_sin(axis_coords, axis_name)  # [B, H, W, half_dim]
 
-            # Apply along the corresponding axis
-            q = self._apply_axis(q, axis_slice, cos, sin, axis_index)
-            k = self._apply_axis(k, axis_slice, cos, sin, axis_index)
+            axis_coords = coords[..., axis_index]  # [B, 1, N]
 
-        return q, k
+            cos, sin = self._axis_cos_sin(axis_coords, axis_name)
+
+            # cos/sin: [B, 1, N, half_dim]
+
+            def apply(t):
+                t_axis = t[..., axis_slice]
+
+                t1 = t_axis[..., ::2]
+                t2 = t_axis[..., 1::2]
+
+                rotated = torch.cat([
+                    t1 * cos - t2 * sin,
+                    t1 * sin + t2 * cos
+                ], dim=-1)
+
+                return torch.cat([
+                    t[..., :axis_slice.start],
+                    rotated,
+                    t[..., axis_slice.stop:]
+                ], dim=-1)
+
+            q_out = apply(q_out)
+            k_out = apply(k_out)
+
+        return q_out, k_out
     
 
 class Attention(nn.Module):
@@ -192,7 +223,7 @@ class Attention(nn.Module):
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
 
-        return  out
+        return self.to_out(out)
 
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim,
@@ -242,7 +273,6 @@ class Transformer(nn.Module):
 
         for attn, ff in self.layers:
             x = attn(x, alibi_bias, coords, mask) + x
-
             x = ff(x) + x
 
         return self.norm(x)
@@ -355,7 +385,8 @@ class Myna(nn.Module):
         use_learned_encoding_x = False,
         use_rope_double_frequency = False,
         use_cls = True,
-        clamping = None):
+        clamping = None,
+        device="cpu"):
 
         super().__init__()
 
@@ -366,7 +397,7 @@ class Myna(nn.Module):
 
         self.patch_height = patch_height
         self.patch_width = patch_width
-
+        self.heads = heads
         self.num_patches_x = image_width // patch_width
         self.num_patches_y = image_height // patch_height
         self.num_patches = self.num_patches_x * self.num_patches_y
@@ -378,14 +409,14 @@ class Myna(nn.Module):
             nn.LayerNorm(patch_dim),
             nn.Linear(patch_dim, d_model),
             nn.LayerNorm(d_model),
-        ).to("cuda")
+        ).to(device)
 
         self.pos_embedding = StaticEmbeddings((1, self.num_patches, patch_dim), image_height, image_width, patch_height, patch_width, d_model,
                                                              use_sinusoidal_x=use_sinusoidal_x,
                                                              use_sinusoidal_y=use_sinusoidal_y,
                                                              use_sinusoidal_raster=use_sinusoidal_raster,
                                                              use_learned_encoding_y=use_learned_encoding_y,
-                                                             use_learned_encoding_x=use_learned_encoding_x).to("cuda")
+                                                             use_learned_encoding_x=use_learned_encoding_x).to(device)
 
         self.use_rope_x = use_rope_x
         self.use_rope_y = use_rope_y
@@ -403,7 +434,7 @@ class Myna(nn.Module):
 
         self.needs_coordinates = use_rope_x or use_rope_y or use_alibi_x or use_alibi_y
 
-        self.patch_coordinates = self.get_patch_coordinates(self.num_patches_y, self.num_patches_x, "cuda")
+        self.patch_coordinates = self.get_patch_coordinates(image_height, image_width, device)
 
         # self.transformer = Transformer(d_model, depth, heads, dim_head, mlp_dim, clamping=clamping,
         #                                rope_on_x=use_rope_x, rope_on_y=use_rope_y, alibi_on_x=use_alibi_x, alibi_on_y=use_alibi_y,
@@ -434,15 +465,10 @@ class Myna(nn.Module):
 
         if mask is not None:
             mask = self.mask_to_patch_mask(mask).any(dim=-1)
-            mask = mask.unsqueeze(1).expand(-1, 8, -1)
+            mask = mask.unsqueeze(1).expand(-1, self.heads, -1)
             mask = mask.reshape(B, -1)
 
-        x += self.pos_embedding(x)
-
-        if self.needs_coordinates:
-            coordinates = self.patch_coordinates.expand(B, -1, -1)
-        else:
-            coordinates = None
+        x = self.pos_embedding(x)
 
         if self.mask_ratio > 0.0:
             unmasked = self.mask_inputs(x, mask, self.mask_ratio, device)
@@ -451,8 +477,10 @@ class Myna(nn.Module):
                 mask = mask.gather(1, unmasked)
 
             if self.needs_coordinates:
-                coordinates = self.patch_coordinates.unsqueeze(0).repeat(B, 1, 1)
+                coordinates = self.get_patch_coordinates(H, W, device).repeat(B, 1, 1)
                 coordinates = coordinates.gather(1, unmasked.unsqueeze(-1).expand(-1, -1, 2))
+            else:
+                coordinates = None
 
         B, P, F = x.shape
 
@@ -461,7 +489,7 @@ class Myna(nn.Module):
             x = torch.cat((cls_tokens, x), dim=1)
 
             if mask is not None:
-                cls_mask = torch.ones((B, 1), dtype=torch.bool)
+                cls_mask = torch.ones((B, 1), dtype=torch.bool, device=device)
                 mask = torch.cat((cls_mask, mask), dim=1)
 
         x = self.transformer(x, coords=coordinates, cls=self.cls_token is not None, mask=mask)
@@ -514,7 +542,9 @@ class Myna(nn.Module):
         return patch_mask
 
 
-    def get_patch_coordinates(self, num_h, num_w, device=None):
+    def get_patch_coordinates(self, H, W, device=None):
+        num_h = H // self.patch_height
+        num_w = W // self.patch_width
 
         ys, xs = torch.meshgrid(
             torch.arange(num_h, device=device),
@@ -522,7 +552,7 @@ class Myna(nn.Module):
             indexing='ij'
         )
 
-        coords = torch.stack([ys, xs], dim=-1).reshape(-1, 2).to(device=device)
+        coords = torch.stack([ys, xs], dim=-1).reshape(-1, 2)
         return coords
 
     def make_embedding_projection(self, patch_height, patch_width, patch_dim, dim):

@@ -161,12 +161,6 @@ class MemmapDataset:
         for _ in range(self.view_count):
             size = self.chunk_size
 
-            if self.stochastic:
-                size = random.randint(
-                    self.min_chunk // 16,
-                    self.max_chunk // 16
-                ) * 16
-
             if spec.shape[1] <= size:
                 pad = size - spec.shape[1]
                 view = torch.nn.functional.pad(spec, (0, pad))

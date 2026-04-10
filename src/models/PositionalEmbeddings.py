@@ -139,7 +139,7 @@ class Alibi2DBias(nn.Module):
             dx = (x[:, :, None] - x[:, None, :])
             dy = (y[:, :, None] - y[:, None, :])
 
-            dt = torch.sqrt(dx ** 2 + dy ** 2 + 1e-6)
+            dt = dx + dy#torch.sqrt(dx ** 2 + dy ** 2 + 1e-6)
             dist += dt
 
         elif self.alibi_on_x:

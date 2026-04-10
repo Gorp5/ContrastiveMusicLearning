@@ -22,7 +22,7 @@ torch.multiprocessing.set_sharing_strategy("file_system")
 # ---------------------------
 # Model
 # ---------------------------
-def build_model(mask_ratio, chunk_length, embedding_params):
+def build_model(mask_ratio, chunk_length, embedding_params, device):
     return Myna(
         image_size=(128, chunk_length),
         channels=1,
@@ -44,7 +44,8 @@ def build_model(mask_ratio, chunk_length, embedding_params):
         use_alibi_x=embedding_params.get("alibi_x", False),
         use_alibi_y=embedding_params.get("alibi_y", False),
         use_learned_alibi_slopes=embedding_params.get("alibi_learned_slopes", False),
-        rope_base=8192
+        rope_base=8192,
+        device=device
     )
 
 
@@ -75,7 +76,7 @@ def gpu_worker(gpu_id, args, model_params_list):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     device = torch.device("cuda:0")
 
-    torch.cuda.set_device(device)
+    # torch.cuda.set_device(device)
 
     models, optimizers = [], []
 
@@ -83,7 +84,8 @@ def gpu_worker(gpu_id, args, model_params_list):
         model = build_model(
             params["mask_ratio"],
             params["chunk_length"],
-            params["embedding_params"]
+            params["embedding_params"],
+            device
         ).to(device)
 
         model.train()
@@ -215,7 +217,6 @@ if __name__ == "__main__":
         })
 
     processes = []
-
     for gpu_id in range(args.num_gpus):
         p = mp.Process(
             target=gpu_worker,
