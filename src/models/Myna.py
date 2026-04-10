@@ -204,7 +204,13 @@ class Attention(nn.Module):
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv)
 
         if self.rotary is not None:
-            q, k = self.rotary(q, k, coords)
+            q_cls, q_tokens = q[:, :, :1], q[:, :, 1:]
+            k_cls, k_tokens = k[:, :, :1], k[:, :, 1:]
+
+            q_tokens, k_tokens = self.rotary(q_tokens, k_tokens, coords)
+
+            q = torch.cat([q_cls, q_tokens], dim=2)
+            k = torch.cat([k_cls, k_tokens], dim=2)
 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 

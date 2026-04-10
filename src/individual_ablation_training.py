@@ -216,6 +216,7 @@ if __name__ == "__main__":
 
     processes = []
     gpu_worker(0, args, models_per_gpu)
+
     # for gpu_id in range(args.num_gpus):
     #     p = mp.Process(
     #         target=gpu_worker,
