@@ -127,8 +127,8 @@ def gpu_worker(gpu_id, args, model_params_list):
 
                 # Flatten views
                 stacked = sliced.view(B * 2, T, F).unsqueeze(1)
-                big_length = chunk_len > 257
-                low_masking = params["chunk_length"] < 0.5
+                big_length = chunk_len > 256
+                low_masking = params["mask_ratio"] <= 0.5
                 do_checkpoints = big_length and low_masking
 
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16):
