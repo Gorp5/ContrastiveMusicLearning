@@ -276,15 +276,15 @@ class StaticEmbeddings(nn.Module):
             self.sinusoidal_embeddings = self.generate_sinusoidal_2d(self.height_in_patches, self.width_in_patches, d_model).unsqueeze(0)
         elif use_sinusoidal_x:
             x_positions = torch.arange(self.width_in_patches, dtype=torch.float32).unsqueeze(1)
-            x_emb = self.generate_sinusoidal_1d(x_positions, d_model)
+            x_emb = self._generate_sinusoidal_1d(x_positions, d_model)
             self.sinusoidal_embeddings = x_emb.unsqueeze(0).expand(self.height_in_patches, -1, -1).unsqueeze(0)
         elif use_sinusoidal_y:
             y_positions = torch.arange(self.height_in_patches, dtype=torch.float32).unsqueeze(1)
-            y_emb = self.generate_sinusoidal_1d(y_positions, d_model)
+            y_emb = self._generate_sinusoidal_1d(y_positions, d_model)
             self.sinusoidal_embeddings = y_emb.unsqueeze(1).expand(-1, self.width_in_patches, -1).unsqueeze(0)
         elif use_sinusoidal_raster:
             positions = torch.arange(self.height_in_patches * self.width_in_patches, dtype=torch.float32).unsqueeze(1)
-            raster_emb = self.generate_sinusoidal_1d(positions, d_model)
+            raster_emb = self._generate_sinusoidal_1d(positions, d_model)
             self.sinusoidal_embeddings = raster_emb.view(self.height_in_patches, self.width_in_patches, -1).unsqueeze(0)
 
         self.shape = shape

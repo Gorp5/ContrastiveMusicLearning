@@ -14,6 +14,7 @@ OUTPUT="/home/pordanjhillips/output"
 # Cache dataset locally
 echo "Caching dataset locally..."
 sudo chown -R $USER:$USER /home/pordanjhillips/dataset
+sudo chmod -R 777 /home/pordanjhillips/output
 
 if [ ! -d "$DATASET" ] || [ -z "$(ls -A "$DATASET")" ]; then
   echo "Caching dataset..."
