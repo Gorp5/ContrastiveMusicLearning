@@ -32,4 +32,4 @@ pip install -r ContrastiveMusicLearning/src/requirements.txt
 [ -d "dataset" ] && echo "exists" || sudo mkdir dataset
 [ -d "output" ] && echo "exists" || sudo mkdir output
 # Run training script
-bash ContrastiveMusicLearning/src/8xnode_training.sh $ID_BASE
+bash ContrastiveMusicLearning/src/individual_ablation_training.sh $ID_BASE
