@@ -46,13 +46,13 @@ def build_model(mask_ratio, chunk_length, embedding_params):
 # DataLoader (NO DISTRIBUTED SAMPLER)
 # ---------------------------
 def build_dataloader(dataset_path, batch_size, chunk_length):
-    dataset = MemmapDataset(dataset_path, split="test", views=2, chunk_size=chunk_length)
+    dataset = MemmapDataset(dataset_path, split="train", views=2, chunk_size=chunk_length)
 
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=2,
         pin_memory=True,
         drop_last=True
     )

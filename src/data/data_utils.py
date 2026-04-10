@@ -50,7 +50,7 @@ class StreamViewDataset(Dataset):
 
         # Process outside the transaction - allows LMDB to free the read snapshot
         np_arr = pickle.loads(data_bytes)
-        spec = torch.from_numpy(np_arr).float()  # Converts float16->float32
+        spec = torch.from_numpy(np_arr.copy()).float()
 
         del np_arr, data_bytes
 
