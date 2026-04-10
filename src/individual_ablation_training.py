@@ -120,7 +120,7 @@ def gpu_worker(gpu_id, args, model_params_list):
             inputs = inputs.to(device, non_blocking=True)
 
             zs = []
-            for i, (model, params, optimizer) in enumerate(zip(models, model_params_list[gpu_id], optimizers)):
+            for model, params in zip(models, model_params_list[gpu_id]):
                 chunk_len = params["chunk_length"]
 
                 sliced = inputs[:, :, :, :chunk_len]  # [B, 2, chunk_len, F]
@@ -132,20 +132,16 @@ def gpu_worker(gpu_id, args, model_params_list):
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                     z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
 
-                loss = criterion(z[:, 0], z[:, 1])
+                zs.append(z)
+
+            for i, (z, model, optimizer) in enumerate(zip(zs, models, optimizers)):
                 optimizer.zero_grad(set_to_none=True)
+
+                loss = criterion(z[:, 0], z[:, 1])
                 loss.backward()
                 optimizer.step()
+
                 losses[i] += loss.item()
-            #
-            # for i, (z, model, optimizer) in enumerate(zip(zs, models, optimizers)):
-            #     optimizer.zero_grad(set_to_none=True)
-            #
-            #     loss = criterion(z[:, 0], z[:, 1])
-            #     loss.backward()
-            #     optimizer.step()
-
-
 
         # ---------------------------
         # SAVE
@@ -164,7 +160,7 @@ def gpu_worker(gpu_id, args, model_params_list):
 # ---------------------------
 def determine_based_on_id(id):
     masking_ratio_array = [0.25, 0.5, 0.75, 0.9]
-    training_chunk_length_array = [128, 256, 512, 1024, 2048]
+    training_chunk_length_array = [128, 256, 512, 1024]
 
     embedding_configs = [
         dict(name="alibi_2d_learned", alibi_x=True, alibi_y=True, alibi_learned_slopes=True),
