@@ -12,7 +12,6 @@ DATASET="/home/pordanjhillips/dataset"
 OUTPUT="/home/pordanjhillips/output"
 
 # Cache dataset locally
-mkdir -p /dataset
 echo "Caching dataset locally..."
 
 if [ ! -d "$DATASET" ] || [ -z "$(ls -A "$DATASET")" ]; then
