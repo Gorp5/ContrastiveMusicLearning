@@ -156,11 +156,11 @@ def gpu_worker(gpu_id, args, model_params_list):
             }, os.path.join(save_dir, f"model_{i}.pt"))
 
     output = "/home/pordanjhillips/output"
-    gcs_bucket = "gs://mtg-jamendo/SongsDataset/models"
+    gcs_bucket = f"gs://mtg-jamendo/SongsDataset/models/GPU-{gpu_id}-{args.id}"
 
     subprocess.run([
         "gsutil", "-m", "cp", "-r",
-        f"{output}/{args.id}",
+        f"{output}/GPU-{gpu_id}/.",
         gcs_bucket
     ])
 
