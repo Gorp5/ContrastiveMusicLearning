@@ -29,8 +29,7 @@ pip install --upgrade pip
 # Install requirements
 pip install -r ContrastiveMusicLearning/src/requirements.txt
 
-sudo mkdir dataset
-sudo mkdir output
-
+[ -d "dataset" ] && echo "exists" || sudo mkdir dataset
+[ -d "output" ] && echo "exists" || sudo mkdir output
 # Run training script
 bash ContrastiveMusicLearning/src/8xnode_training.sh $ID_BASE

@@ -19,7 +19,6 @@ if [ ! -d "$DATASET" ] || [ -z "$(ls -A "$DATASET")" ]; then
   echo "Caching dataset..."
   gsutil -m cp -r ${GCS_BUCKET}/train*.bin ${DATASET}
   gsutil -m cp -r ${GCS_BUCKET}/index.npy ${DATASET}
-
 else
   echo "Dataset already cached."
 fi
