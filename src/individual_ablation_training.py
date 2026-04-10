@@ -59,11 +59,11 @@ def build_dataloader(dataset_path, batch_size, chunk_length):
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=2,
+        num_workers=0,
         pin_memory=True,
         drop_last=True,
-        persistent_workers=True,
-        prefetch_factor=2
+        # persistent_workers=True,
+        # prefetch_factor=2
     )
 
 
@@ -74,7 +74,7 @@ def gpu_worker(gpu_id, args, model_params_list):
     print(f"[GPU {gpu_id}] worker starting")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    device = torch.device("cuda:0")
+    device = torch.device("cpu")
 
     # torch.cuda.set_device(device)
 
@@ -119,13 +119,20 @@ def gpu_worker(gpu_id, args, model_params_list):
             _, inputs, _ = batch
             inputs = inputs.to(device, non_blocking=True)
 
-            B, _, T, F = inputs.shape
-            stacked = inputs.view(B * 2, T, F).unsqueeze(1)
 
             zs = []
-            for model in models:
-                with torch.cuda.amp.autocast(False):
+            for model, params in zip(models, model_params_list[gpu_id]):
+                chunk_len = params["chunk_length"]
+
+                sliced = inputs[:, :, :, :chunk_len]  # [B, 2, chunk_len, F]
+                B, _, T, F = sliced.shape
+
+                # Flatten views
+                stacked = sliced.view(B * 2, chunk_len, F).unsqueeze(1)
+
+                with torch.amp.autocast("cuda", enabled=False):
                     z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
+
                 zs.append(z)
 
             for i, (z, model, optimizer) in enumerate(zip(zs, models, optimizers)):
@@ -215,7 +222,9 @@ if __name__ == "__main__":
         })
 
     processes = []
-    # gpu_worker(0, args, models_per_gpu)
+
+    gpu_worker(0, args, models_per_gpu)
+
     for gpu_id in range(args.num_gpus):
         p = mp.Process(
             target=gpu_worker,

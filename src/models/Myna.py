@@ -273,16 +273,16 @@ class StaticEmbeddings(nn.Module):
         if use_sinusoidal_x and use_sinusoidal_y:
             self.sinusoidal_embeddings = self.generate_sinusoidal_2d(self.height_in_patches, self.width_in_patches, d_model).unsqueeze(0).to(device=device)
         elif use_sinusoidal_x:
-            x_positions = torch.arange(self.width_in_patches, dtype=torch.float32).unsqueeze(1)
+            x_positions = torch.arange(self.width_in_patches, device=device, dtype=torch.float32).unsqueeze(1)
             x_emb = self._generate_sinusoidal_1d(x_positions, d_model)
             self.sinusoidal_embeddings = x_emb.unsqueeze(0).expand(self.height_in_patches, -1, -1).unsqueeze(0).to(device=device)
         elif use_sinusoidal_y:
-            y_positions = torch.arange(self.height_in_patches, dtype=torch.float32).unsqueeze(1)
+            y_positions = torch.arange(self.height_in_patches, device=device, dtype=torch.float32).unsqueeze(1)
             y_emb = self._generate_sinusoidal_1d(y_positions, d_model)
             self.sinusoidal_embeddings = y_emb.unsqueeze(1).expand(-1, self.width_in_patches, -1).unsqueeze(0).to(device=device)
         elif use_sinusoidal_raster:
-            positions = torch.arange(self.height_in_patches * self.width_in_patches, dtype=torch.float32).unsqueeze(1)
-            raster_emb = self._generate_sinusoidal_1d(positions, d_model)
+            positions = torch.arange(self.height_in_patches * self.width_in_patches, device=device, dtype=torch.float32).unsqueeze(1)
+            raster_emb = self._generate_sinusoidal_1d(positions, d_model).to(device=device)
             self.sinusoidal_embeddings = raster_emb.view(self.height_in_patches, self.width_in_patches, -1).unsqueeze(0).to(device=device)
 
         self.shape = shape
@@ -426,6 +426,9 @@ class Myna(nn.Module):
 
         self.linear_head = nn.Linear(d_model, latent_space)
 
+        self.to_cord = Rearrange("b (h w) f -> b h w f", w=self.num_patches_x, h=self.num_patches_y)
+        self.from_cord = Rearrange("b h w f -> b (h w) f", w=self.num_patches_x, h=self.num_patches_y)
+
     def forward(self, img, mask=None):
         B, _, H, W = img.shape
         device = img.device
@@ -438,9 +441,10 @@ class Myna(nn.Module):
             mask = mask.reshape(B, -1)
 
         B, raster, F = x.shape
-        x = x.view(B, self.num_patches_y, self.num_patches_x, -1)
+
+        x = self.to_cord(x)
         x = self.pos_embedding(x)
-        x = x.view(B, raster, -1)
+        x = self.from_cord(x)
 
         if self.mask_ratio > 0.0:
             unmasked = self.mask_inputs(x, mask, self.mask_ratio, device)
