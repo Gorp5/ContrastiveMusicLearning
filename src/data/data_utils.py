@@ -151,7 +151,7 @@ class MemmapDataset:
         mm = self._get_memmap(file_id)
         spec = mm[start:start + length]  # (time, freq)
 
-        spec = torch.from_numpy(spec.copy()).float()
+        spec = torch.from_numpy(spec).float().T
 
         # ---------------------------
         # Generate views
