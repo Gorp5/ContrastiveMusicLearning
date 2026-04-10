@@ -31,7 +31,7 @@ python3 ContrastiveMusicLearning/src/individual_ablation_training.py \
     --num_models 16 \
     --save_dir ${OUTPUT} \
     --train_data_dir ${DATASET} \
-    --chunk_length 256 \
+    --chunk_length 2048 \
     --batch_size ${BATCH_SIZE} \
     --epochs ${EPOCHS}
 
