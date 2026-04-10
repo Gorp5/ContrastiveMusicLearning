@@ -74,7 +74,7 @@ def gpu_worker(gpu_id, args, model_params_list):
     print(f"[GPU {gpu_id}] worker starting")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    device = torch.device("cpu")
+    device = torch.device("cuda:0")
 
     # torch.cuda.set_device(device)
 
@@ -222,8 +222,6 @@ if __name__ == "__main__":
         })
 
     processes = []
-
-    gpu_worker(0, args, models_per_gpu)
 
     for gpu_id in range(args.num_gpus):
         p = mp.Process(
