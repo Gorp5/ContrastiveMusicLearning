@@ -468,7 +468,10 @@ class Myna(nn.Module):
             mask = mask.unsqueeze(1).expand(-1, self.heads, -1)
             mask = mask.reshape(B, -1)
 
+        B, raster, F = x.shape
+        x = x.view(B, self.num_patches_y, self.num_patches_x, -1)
         x = self.pos_embedding(x)
+        x = x.view(B, raster, -1)
 
         if self.mask_ratio > 0.0:
             unmasked = self.mask_inputs(x, mask, self.mask_ratio, device)

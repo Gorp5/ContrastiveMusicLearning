@@ -59,11 +59,11 @@ def build_dataloader(dataset_path, batch_size, chunk_length):
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=2,              # 🔥 FIX: stop CPU explosion
+        num_workers=0,              # 🔥 FIX: stop CPU explosion
         pin_memory=True,
         drop_last=True,
-        persistent_workers=True,    # 🔥 reduces worker restart overhead
-        prefetch_factor=2           # 🔥 prevents CPU starvation spikes
+        # persistent_workers=True,    # 🔥 reduces worker restart overhead
+        # prefetch_factor=2           # 🔥 prevents CPU starvation spikes
     )
 
 
@@ -74,7 +74,7 @@ def gpu_worker(gpu_id, args, model_params_list):
     print(f"[GPU {gpu_id}] worker starting")
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-    device = torch.device("cuda:0")
+    device = torch.device("cpu")
 
     # torch.cuda.set_device(device)
 
@@ -217,13 +217,14 @@ if __name__ == "__main__":
         })
 
     processes = []
-    for gpu_id in range(args.num_gpus):
-        p = mp.Process(
-            target=gpu_worker,
-            args=(gpu_id, args, models_per_gpu)
-        )
-        p.start()
-        processes.append(p)
-
-    for p in processes:
-        p.join()
+    gpu_worker(0, args, models_per_gpu)
+    # for gpu_id in range(args.num_gpus):
+    #     p = mp.Process(
+    #         target=gpu_worker,
+    #         args=(gpu_id, args, models_per_gpu)
+    #     )
+    #     p.start()
+    #     processes.append(p)
+    #
+    # for p in processes:
+    #     p.join()
