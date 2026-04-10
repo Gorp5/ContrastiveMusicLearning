@@ -63,7 +63,7 @@ def build_dataloader(dataset_path, batch_size, chunk_length):
         pin_memory=True,
         drop_last=True,
         # persistent_workers=True,
-        # prefetch_factor=2
+        # prefetch_factor=4
     )
 
 
@@ -128,7 +128,7 @@ def gpu_worker(gpu_id, args, model_params_list):
                 B, _, T, F = sliced.shape
 
                 # Flatten views
-                stacked = sliced.view(B * 2, chunk_len, F).unsqueeze(1)
+                stacked = sliced.view(B * 2, F, chunk_len).unsqueeze(1)
 
                 with torch.amp.autocast("cuda", enabled=False):
                     z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
@@ -222,7 +222,7 @@ if __name__ == "__main__":
         })
 
     processes = []
-
+    gpu_worker(0, args, models_per_gpu)
     for gpu_id in range(args.num_gpus):
         p = mp.Process(
             target=gpu_worker,
