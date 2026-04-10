@@ -14,45 +14,6 @@ import math
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
 
-class TempoEstimatorCNN(nn.Module):
-    def __init__(self, d_model, hidden=64):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv1d(d_model, hidden, kernel_size=5, stride=2, padding=2),
-            nn.BatchNorm1d(hidden),
-            nn.GELU(),
-            nn.Conv1d(hidden, hidden, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm1d(hidden),
-            nn.GELU(),
-            nn.Conv1d(hidden, hidden, kernel_size=3, stride=1, padding=1),
-            nn.GELU(),
-        )
-
-        self.head = nn.Sequential(
-            nn.Conv1d(hidden, hidden // 2, kernel_size=3, padding=1),
-            nn.GELU(),
-            nn.Conv1d(hidden // 2, 1, kernel_size=1),
-        )
-
-        # small epsilon to keep tempo positive and non-zero
-        self.eps = 1e-3
-
-    def forward(self, x):
-        B, N, D = x.shape
-        x_t = x.transpose(1, 2)
-
-        h = self.conv(x_t)
-        h = self.head(h)
-
-        # interpolate back to original N in case convs changed temporal resolution
-        h = F.interpolate(h, size=N, mode='linear', align_corners=False)
-        h = h.squeeze(1)
-
-        # make positive and stable
-        tempo = F.softplus(h) + self.eps
-
-        return tempo
-
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim):
         super().__init__()
@@ -289,7 +250,8 @@ class StaticEmbeddings(nn.Module):
                  use_sinusoidal_y=False,
                  use_sinusoidal_raster=False,
                  use_learned_encoding_y=False,
-                 use_learned_encoding_x=False):
+                 use_learned_encoding_x=False,
+                 device="cuda"):
 
         super().__init__()
 
@@ -303,25 +265,25 @@ class StaticEmbeddings(nn.Module):
         self.use_sinusoidal_raster = use_sinusoidal_raster
 
         if use_learned_encoding_y:
-            self.y_pos_embedding = nn.Parameter(torch.zeros(1, self.height_in_patches, 1, d_model))
+            self.y_pos_embedding = nn.Parameter(torch.zeros(1, self.height_in_patches, 1, d_model)).to(device=device)
 
         if use_learned_encoding_x:
-            self.x_pos_embedding = nn.Parameter(torch.zeros(1, 1, self.width_in_patches, d_model))
+            self.x_pos_embedding = nn.Parameter(torch.zeros(1, 1, self.width_in_patches, d_model)).to(device=device)
 
         if use_sinusoidal_x and use_sinusoidal_y:
-            self.sinusoidal_embeddings = self.generate_sinusoidal_2d(self.height_in_patches, self.width_in_patches, d_model).unsqueeze(0)
+            self.sinusoidal_embeddings = self.generate_sinusoidal_2d(self.height_in_patches, self.width_in_patches, d_model).unsqueeze(0).to(device=device)
         elif use_sinusoidal_x:
             x_positions = torch.arange(self.width_in_patches, dtype=torch.float32).unsqueeze(1)
             x_emb = self._generate_sinusoidal_1d(x_positions, d_model)
-            self.sinusoidal_embeddings = x_emb.unsqueeze(0).expand(self.height_in_patches, -1, -1).unsqueeze(0)
+            self.sinusoidal_embeddings = x_emb.unsqueeze(0).expand(self.height_in_patches, -1, -1).unsqueeze(0).to(device=device)
         elif use_sinusoidal_y:
             y_positions = torch.arange(self.height_in_patches, dtype=torch.float32).unsqueeze(1)
             y_emb = self._generate_sinusoidal_1d(y_positions, d_model)
-            self.sinusoidal_embeddings = y_emb.unsqueeze(1).expand(-1, self.width_in_patches, -1).unsqueeze(0)
+            self.sinusoidal_embeddings = y_emb.unsqueeze(1).expand(-1, self.width_in_patches, -1).unsqueeze(0).to(device=device)
         elif use_sinusoidal_raster:
             positions = torch.arange(self.height_in_patches * self.width_in_patches, dtype=torch.float32).unsqueeze(1)
             raster_emb = self._generate_sinusoidal_1d(positions, d_model)
-            self.sinusoidal_embeddings = raster_emb.view(self.height_in_patches, self.width_in_patches, -1).unsqueeze(0)
+            self.sinusoidal_embeddings = raster_emb.view(self.height_in_patches, self.width_in_patches, -1).unsqueeze(0).to(device=device)
 
         self.shape = shape
 
@@ -422,7 +384,8 @@ class Myna(nn.Module):
                                                              use_sinusoidal_y=use_sinusoidal_y,
                                                              use_sinusoidal_raster=use_sinusoidal_raster,
                                                              use_learned_encoding_y=use_learned_encoding_y,
-                                                             use_learned_encoding_x=use_learned_encoding_x).to(device)
+                                                             use_learned_encoding_x=use_learned_encoding_x,
+                                                             device=device).to(device)
 
         self.use_rope_x = use_rope_x
         self.use_rope_y = use_rope_y
