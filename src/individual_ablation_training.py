@@ -128,7 +128,7 @@ def gpu_worker(gpu_id, args, model_params_list):
                 B, _, T, F = sliced.shape
 
                 # Flatten views
-                stacked = sliced.view(B * 2, T, chunk_len).unsqueeze(1)
+                stacked = sliced.view(B * 2, T, F).unsqueeze(1)
 
                 with torch.amp.autocast("cuda", enabled=False):
                     z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
