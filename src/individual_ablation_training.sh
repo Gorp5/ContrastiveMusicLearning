@@ -8,6 +8,7 @@ GCS_BUCKET="gs://mtg-jamendo/SongsDataset"
 BATCH_SIZE=512
 EPOCHS=128
 ABLATION_ID=$1
+NUM_MODELS=$2
 DATASET="/home/pordanjhillips/dataset"
 OUTPUT="/home/pordanjhillips/output"
 
@@ -28,7 +29,7 @@ fi
 echo "Starting training for ablation $ABLATION_ID..."
 python3 ContrastiveMusicLearning/src/individual_ablation_training.py \
     --id $ABLATION_ID \
-    --num_models 16 \
+    --num_models ${NUM_MODELS} \
     --save_dir ${OUTPUT} \
     --train_data_dir ${DATASET} \
     --chunk_length 2048 \

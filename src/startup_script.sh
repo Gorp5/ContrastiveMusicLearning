@@ -5,6 +5,7 @@ set -e  # exit on error
 
 # Argument (must pass this when running script)
 ID_BASE=$1
+NUM_MODELS=$2
 
 if [ -z "$ID_BASE" ]; then
   echo "Usage: bash setup_and_run.sh <ID_NUMBER_MULTIPLE_OF_16>"
@@ -34,7 +35,7 @@ pip install -r ContrastiveMusicLearning/src/requirements.txt
 [ -d "dataset" ] && echo "exists" || sudo mkdir dataset
 [ -d "output" ] && echo "exists" || sudo mkdir output
 # Run training script
-bash ContrastiveMusicLearning/src/individual_ablation_training.sh $ID_BASE
+bash ContrastiveMusicLearning/src/individual_ablation_training.sh $ID_BASE $NUM_MODELS
 
 ID_BASE=$1
 OUTPUT="/home/pordanjhillips/output"
