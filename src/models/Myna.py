@@ -181,7 +181,7 @@ class Attention(nn.Module):
             dropout_p=0.0,
             is_causal=False
         )
-
+        
         out = rearrange(out, 'b h n d -> b n (h d)')
 
         return self.to_out(out)
