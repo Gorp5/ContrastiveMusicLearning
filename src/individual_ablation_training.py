@@ -120,26 +120,19 @@ def gpu_worker(gpu_id, args, model_params_list):
             inputs = inputs.to(device, non_blocking=True)
 
             zs = []
-            T_full = 2048
-            for model, optimizer, params in zip(models, optimizers, model_params_list[gpu_id]):
+            for model, params in zip(models, model_params_list[gpu_id]):
                 chunk_len = params["chunk_length"]
 
-                if chunk_len < T_full:
-                    start = torch.randint(0, T_full - chunk_len + 1, (1,)).item()
-                    sliced = inputs[:, :, start:start + chunk_len, :]
-                else:
-                    sliced = inputs
+                sliced = inputs[:, :, :, :chunk_len]  # [B, 2, chunk_len, F]
+                B, _, T, F = sliced.shape
 
-                stacked = sliced.view(B * 2, chunk_len, F).unsqueeze(1)
-
-                optimizer.zero_grad(set_to_none=True)
+                # Flatten views
+                stacked = sliced.view(B * 2, T, F).unsqueeze(1)
 
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                     z = model(stacked, mask=None).squeeze(1).view(B, 2, -1)
-                    loss = criterion(z[:, 0], z[:, 1])
 
-                loss.backward()
-                optimizer.step()
+                zs.append(z)
 
             for i, (z, model, optimizer) in enumerate(zip(zs, models, optimizers)):
                 optimizer.zero_grad(set_to_none=True)
