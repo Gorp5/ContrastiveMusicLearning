@@ -36,6 +36,7 @@ pip install -r ContrastiveMusicLearning/src/requirements.txt
 
 [ -d "dataset" ] && echo "exists" || sudo mkdir /mnt/ssd/dataset
 [ -d "output" ] && echo "exists" || sudo mkdir /mnt/ssd/output
+
 # Run training script
 bash ContrastiveMusicLearning/src/individual_ablation_training.sh $ID_BASE $NUM_MODELS
 

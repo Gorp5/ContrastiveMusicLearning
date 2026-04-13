@@ -9,13 +9,13 @@ BATCH_SIZE=512
 EPOCHS=128
 ABLATION_ID=$1
 NUM_MODELS=$2
-DATASET="/home/pordanjhillips/dataset"
-OUTPUT="/home/pordanjhillips/output"
+DATASET="/mnt/ssd/dataset"
+OUTPUT="/mnt/ssd/output"
 
 # Cache dataset locally
 echo "Caching dataset locally..."
-sudo chown -R $USER:$USER /home/pordanjhillips/dataset
-sudo chmod -R 777 /home/pordanjhillips/output
+sudo chown -R $USER:$USER ${DATASET}
+sudo chmod -R 777 ${OUTPUT}
 
 if [ ! -d "$DATASET" ] || [ -z "$(ls -A "$DATASET")" ]; then
   echo "Caching dataset..."
