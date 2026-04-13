@@ -1,8 +1,6 @@
 #!/bin/bash
 set -e  # exit on error
 
-
-
 # Argument (must pass this when running script)
 ID_BASE=$1
 NUM_MODELS=$2
@@ -13,6 +11,10 @@ if [ -z "$ID_BASE" ]; then
 fi
 
 echo "Starting setup for ID base: $ID_BASE"
+
+sudo mkfs.ext4 -F /dev/nvme0n1
+sudo mkdir -p /mnt/ssd
+sudo mount /dev/nvme0n1 /mnt/ssd
 
 # System setup
 sudo apt update
@@ -32,13 +34,13 @@ pip install --upgrade pip
 # Install requirements
 pip install -r ContrastiveMusicLearning/src/requirements.txt
 
-[ -d "dataset" ] && echo "exists" || sudo mkdir dataset
-[ -d "output" ] && echo "exists" || sudo mkdir output
+[ -d "dataset" ] && echo "exists" || sudo mkdir /mnt/ssd/dataset
+[ -d "output" ] && echo "exists" || sudo mkdir /mnt/ssd/output
 # Run training script
 bash ContrastiveMusicLearning/src/individual_ablation_training.sh $ID_BASE $NUM_MODELS
 
 ID_BASE=$1
-OUTPUT="/home/pordanjhillips/output"
+OUTPUT="/mnt/ssd/output"
 GCS_BUCKET="gs://mtg-jamendo/SongsDataset/models"
 
 # Create archive directory and move contents

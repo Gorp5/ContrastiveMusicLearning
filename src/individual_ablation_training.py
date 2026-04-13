@@ -61,11 +61,11 @@ def build_dataloader(dataset_path, batch_size, chunk_length):
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=6,
+        num_workers=3,
         pin_memory=True,
         drop_last=True,
         persistent_workers=True,
-        prefetch_factor=3
+        prefetch_factor=1
     )
 
 
@@ -131,7 +131,7 @@ def gpu_worker(gpu_id, args, model_params_list):
                 stacked = sliced.view(B * 2, T, F).unsqueeze(1)
                 big_length = chunk_len > 256
                 low_masking = params["mask_ratio"] <= 0.5
-                do_checkpoints = big_length and low_masking
+                do_checkpoints = True#big_length and low_masking
 
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                     z = model(stacked, mask=None, checkpointing=do_checkpoints).squeeze(1).view(B, 2, -1)
