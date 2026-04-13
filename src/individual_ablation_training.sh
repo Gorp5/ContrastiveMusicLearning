@@ -4,7 +4,8 @@ set -e
 # ===============================
 # CONFIGURATION
 # ===============================
-GCS_BUCKET="gs://mtg-jamendo/SongsDataset"
+
+GCS_BUCKET="gs://mtg-jamendo-dataset/SongsDataset"
 BATCH_SIZE=512
 EPOCHS=128
 ABLATION_ID=$1
