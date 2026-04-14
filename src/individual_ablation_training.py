@@ -112,6 +112,8 @@ def gpu_worker(gpu_id, args, model_params_list):
     # ---------------------------
     # TRAIN LOOP
     # ---------------------------
+    total_losses = []
+
     for epoch in range(args.epochs):
         losses = [0.0 for _ in models]
 
@@ -129,12 +131,9 @@ def gpu_worker(gpu_id, args, model_params_list):
 
                 # Flatten views
                 stacked = sliced.view(B * 2, T, F).unsqueeze(1)
-                big_length = chunk_len > 256
-                low_masking = params["mask_ratio"] <= 0.5
-                do_checkpoints = True#big_length and low_masking
 
                 with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                    z = model(stacked, mask=None, checkpointing=do_checkpoints).squeeze(1).view(B, 2, -1)
+                    z = model(stacked, mask=None, checkpointing=True).squeeze(1).view(B, 2, -1)
 
                 optimizer.zero_grad(set_to_none=True)
 
@@ -147,12 +146,16 @@ def gpu_worker(gpu_id, args, model_params_list):
         # ---------------------------
         # SAVE
         # ---------------------------
+
+        final_epoch_loss = losses[i] / len(dataloader)
+        total_losses.append(final_epoch_loss)
+
         for i, model in enumerate(models):
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizers[i].state_dict(),
-                "loss": losses[i] / len(dataloader)
+                "loss": total_losses
             }, os.path.join(save_dir, f"model_{i}.pt"))
 
 # ---------------------------
