@@ -25,30 +25,33 @@ torch.multiprocessing.set_sharing_strategy("file_system")
 # Model
 # ---------------------------
 def build_model(mask_ratio, chunk_length, embedding_params, device):
-    return Myna(
-        image_size=(128, chunk_length),
-        channels=1,
-        patch_size=(16, 16),
-        latent_space=128,
-        d_model=384,
-        depth=12,
-        heads=6,
-        mlp_dim=1536,
-        mask_ratio=mask_ratio,
-        latent_projection_method="cls",
-        use_sinusoidal_x=embedding_params.get("sinusoidal_x", False),
-        use_sinusoidal_y=embedding_params.get("sinusoidal_y", False),
-        use_sinusoidal_raster=embedding_params.get("sinusoidal_raster", False),
-        use_learned_encoding_x=embedding_params.get("learned_x", False),
-        use_learned_encoding_y=embedding_params.get("learned_y", False),
-        use_rope_x=embedding_params.get("rope_x", False),
-        use_rope_y=embedding_params.get("rope_y", False),
-        use_alibi_x=embedding_params.get("alibi_x", False),
-        use_alibi_y=embedding_params.get("alibi_y", False),
-        use_learned_alibi_slopes=embedding_params.get("alibi_learned_slopes", False),
-        rope_base=8192,
-        device=device
-    )
+    if os.path.exists("/mnt/ssd/output/GPU-0/model_0.pt"):
+        return torch.load("/mnt/ssd/output/GPU-0/model_0.pt")["model"]
+    else:
+        return Myna(
+            image_size=(128, chunk_length),
+            channels=1,
+            patch_size=(16, 16),
+            latent_space=128,
+            d_model=384,
+            depth=12,
+            heads=6,
+            mlp_dim=1536,
+            mask_ratio=mask_ratio,
+            latent_projection_method="cls",
+            use_sinusoidal_x=embedding_params.get("sinusoidal_x", False),
+            use_sinusoidal_y=embedding_params.get("sinusoidal_y", False),
+            use_sinusoidal_raster=embedding_params.get("sinusoidal_raster", False),
+            use_learned_encoding_x=embedding_params.get("learned_x", False),
+            use_learned_encoding_y=embedding_params.get("learned_y", False),
+            use_rope_x=embedding_params.get("rope_x", False),
+            use_rope_y=embedding_params.get("rope_y", False),
+            use_alibi_x=embedding_params.get("alibi_x", False),
+            use_alibi_y=embedding_params.get("alibi_y", False),
+            use_learned_alibi_slopes=embedding_params.get("alibi_learned_slopes", False),
+            rope_base=8192,
+            device=device
+        )
 
 
 # ---------------------------
@@ -92,9 +95,18 @@ def gpu_worker(gpu_id, args, model_params_list):
 
         model.train()
 
-        optimizers.append(
-            optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        )
+        epochs_done = 0
+        if os.path.exists("/mnt/ssd/output/GPU-0/model_0.pt"):
+            optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+            saved = torch.load("/mnt/ssd/output/GPU-0/model_0.pt")
+            optimizer = optimizer.load_state_dict(saved["optimizer_state_dict"])
+            optimizers.append(optimizer)
+
+            epochs_done = saved["epoch"]
+        else:
+            optimizers.append(
+                optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+            )
 
         models.append(model)
 
@@ -114,7 +126,7 @@ def gpu_worker(gpu_id, args, model_params_list):
     # ---------------------------
     total_losses = []
 
-    for epoch in range(args.epochs):
+    for epoch in range(args.epochs - epochs_done):
         losses = [0.0 for _ in models]
 
         pbar = tqdm(dataloader, desc=f"GPU {gpu_id} Epoch {epoch}")
@@ -153,7 +165,7 @@ def gpu_worker(gpu_id, args, model_params_list):
         for i, model in enumerate(models):
             torch.save({
                 "epoch": epoch,
-                "model_state_dict": model.state_dict(),
+                "model": model,
                 "optimizer_state_dict": optimizers[i].state_dict(),
                 "loss": total_losses
             }, os.path.join(save_dir, f"model_{i}.pt"))
