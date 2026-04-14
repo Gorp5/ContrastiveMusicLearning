@@ -8,22 +8,33 @@ set -e
 GCS_BUCKET="gs://mtg-jamendo-dataset/SongsDataset"
 BATCH_SIZE=512
 EPOCHS=128
+
 ABLATION_ID=$1
 NUM_MODELS=$2
+
 DATASET="/mnt/ssd/dataset"
 OUTPUT="/mnt/ssd/output"
 
 # Cache dataset locally
-echo "Caching dataset locally..."
-sudo chown -R $USER:$USER ${DATASET}
-sudo chmod -R 777 ${OUTPUT}
+sudo mkdir -p "$DATASET"
+sudo mkdir -p "$OUTPUT"
 
-if [ ! -d "$DATASET" ] || [ -z "$(ls -A "$DATASET")" ]; then
-  echo "Caching dataset..."
-  gsutil -m cp -r ${GCS_BUCKET}/train*.bin ${DATASET}
-  gsutil -m cp -r ${GCS_BUCKET}/index.npy ${DATASET}
+sudo chown -R $USER:$USER "$DATASET" "$OUTPUT"
+
+echo "Checking dataset cache..."
+
+DATASET_MARKER="${DATASET}/.cache_complete"
+
+if [ -f "$DATASET_MARKER" ]; then
+  echo "Dataset already cached (marker found)."
 else
-  echo "Dataset already cached."
+  echo "Caching dataset..."
+
+  gcloud storage cp -r "${GCS_BUCKET}/train*.bin" "$DATASET/"
+  gcloud storage cp "${GCS_BUCKET}/index.npy" "$DATASET/"
+
+  # Mark cache as complete
+  touch "$DATASET_MARKER"
 fi
 
 # Run training
@@ -36,6 +47,3 @@ python3 ContrastiveMusicLearning/src/individual_ablation_training.py \
     --chunk_length 2048 \
     --batch_size ${BATCH_SIZE} \
     --epochs ${EPOCHS}
-
-# Shutdown VM
-#shutdown -h now
